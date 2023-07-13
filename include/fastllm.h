@@ -20,6 +20,10 @@
 
 #include "devices/cpu/cputhreadpool.h"
 
+#ifdef USE_TFACC40T
+#include "Data.h"  
+#endif
+
 namespace fastllm {
     void PrintInstructionInfo();
     void SetThreads(int t);
@@ -194,6 +198,9 @@ namespace fastllm {
         std::vector <float> scales, mins;
         std::vector <int> zeros;
         std::vector <int> weightSum; // 作为权重时，有时候需要存一些和加速计算
+#ifdef USE_TFACC40T
+        tfdl::PerChannelConfig tfWeightConfig;
+#endif
 
         std::string fileName;
         long long filePos;

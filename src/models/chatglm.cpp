@@ -18,6 +18,10 @@
 #include "fastllm-cuda.cuh"
 #endif
 
+#ifdef USE_TFACC40T
+#include <Operations.h>        
+#endif
+
 namespace fastllm {
     ChatGLMModel::ChatGLMModel() {
         this->model_type = "chatglm";
@@ -620,6 +624,9 @@ namespace fastllm {
 #else
 			retCb(-1, retString.c_str());
 #endif
+#ifdef USE_TFACC40T
+        tfacc40t::ReleaseAllDeviceMemory();
+#endif
         return retString;
     }
 
@@ -787,6 +794,9 @@ namespace fastllm {
             }
         }
 
+#ifdef USE_TFACC40T
+        tfacc40t::ReleaseAllDeviceMemory();
+#endif
         if (retCb)
             retCb(-1, outputs);
     }

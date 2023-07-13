@@ -4,9 +4,13 @@ project(fastllm LANGUAGES CXX)
 
 option(USE_CUDA "use cuda" OFF)
 
+option(USE_TFACC "use tfacc" ON)
+
 option(PY_API "python api" OFF)
 
 message(STATUS "USE_CUDA: ${USE_CUDA}")
+
+message(STATUS "USE_TFACC: %{USE_TFACC}")
 
 message(STATUS "PYTHON_API: ${PY_API}")
 
@@ -40,6 +44,22 @@ if (USE_CUDA)
     set(CMAKE_CUDA_ARCHITECTURES "native")
 endif()
 
+if (USE_TFACC)
+    add_definitions(-DARM)
+    add_definitions(-DUSE_TFDL)
+    add_definitions(-DUSE_TFACC40T)
+
+    set(FASTLLM_TFACC_SOURCES src/devices/tfacc/tfaccdevice.cpp)
+
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/tfdl/include)
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/tfdl/tfacc40t)
+
+    set(lib_tfacc ${CMAKE_CURRENT_SOURCE_DIR}/third_party/tfdl/build/src/lib_tfdl.so
+                  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/tfdl/tfacc40t/libtfnn.so
+                  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/tfdl/tfacc40t/libtfacc40t.so)
+    set(FASTLLM_LINKED_LIBS ${FASTLLM_LINKED_LIBS} ${lib_tfacc})
+endif()
+
 if (PY_API)
     set(PYBIND third_party/pybind11)
     add_subdirectory(${PYBIND})
@@ -57,6 +77,7 @@ else()
 add_library(fastllm OBJECT
             ${FASTLLM_CXX_SOURCES}
             ${FASTLLM_CUDA_SOURCES}
+            ${FASTLLM_TFACC_SOURCES}
             )
 target_link_libraries(fastllm PUBLIC ${FASTLLM_LINKED_LIBS})
 

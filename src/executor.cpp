@@ -12,11 +12,18 @@
 #include "devices/cuda/cudadevice.h"
 #endif
 
+#ifdef USE_TFACC40T
+#include "devices/tfacc/tfaccdevice.h"
+#endif
+
 namespace fastllm {
     Executor::Executor() {
         this->devices.clear();
 #ifdef USE_CUDA
         this->devices.push_back((BaseDevice*) new CudaDevice());
+#endif
+#ifdef USE_TFACC40T
+        this->devices.push_back((BaseDevice*) new TfaccDevice());
 #endif
         this->devices.push_back((BaseDevice*) new CpuDevice());
     }

@@ -37,7 +37,7 @@ namespace fastllm {
     static bool kvCacheInCPU = false;
 
     void PrintInstructionInfo() {
-        std::string avx = "OFF", avx2 = "OFF", aarch64 = "OFF", neonFp16 = "OFF", neonDot = "OFF";
+        std::string avx = "OFF", avx2 = "OFF", aarch64 = "OFF", neonFp16 = "OFF", neonDot = "OFF", tfacc = "OFF";
 #ifdef __AVX__
         avx = "ON";
 #endif
@@ -53,11 +53,15 @@ namespace fastllm {
 #ifdef __ARM_FEATURE_DOTPROD
         neonDot = "ON";
 #endif
+#ifdef USE_TFACC40T
+        tfacc = "ON";
+#endif
         printf("AVX: %s\n", avx.c_str());
         printf("AVX2: %s\n", avx2.c_str());
         printf("AARCH64: %s\n", aarch64.c_str());
         printf("Neon FP16: %s\n", neonFp16.c_str());
         printf("Neon DOT: %s\n", neonDot.c_str());
+        printf("TFACC: %s\n", tfacc.c_str());
     }
 
     void SetKVCacheInCPU(bool v) {
@@ -867,12 +871,20 @@ namespace fastllm {
 		            weight[name].perChannelsConfigs.resize(k);
 		            weight[name].zeros.resize(k);
 		            weight[name].scales.resize(k);
+#ifdef USE_TFACC40T
+                    weight[name].tfWeightConfig = tfdl::PerChannelConfig();
+                    weight[name].tfWeightConfig.axis = weight[name].perChannelAxis;
+                    weight[name].tfWeightConfig.configs.resize(k);
+#endif
 		            for (int i = 0; i < k; i++) {
 			            float minValue = buffer.ReadFloat();
 			            float maxValue = buffer.ReadFloat();
 			            weight[name].perChannelsConfigs[i] = LowBitConfig(minValue, maxValue, bit, 0);
 			            weight[name].zeros[i] = weight[name].perChannelsConfigs[i].zeroPoint;
 			            weight[name].scales[i] = weight[name].perChannelsConfigs[i].scale;
+#ifdef USE_TFACC40T
+                        weight[name].tfWeightConfig.configs[i] = tfdl::QuantizationConfig(minValue, maxValue);
+#endif
 		            }
 		            buffer.ReadBytes(weight[name].cpuData, weight[name].GetBytes());
 	            } else if (dataType == DataType::INT4_NOZERO) {
