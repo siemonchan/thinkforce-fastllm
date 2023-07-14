@@ -83,6 +83,7 @@ namespace fastllm {
         Data contextLayer;
         Data mlpInput;
         Data middle, middle2;
+        Data temp;
         std::vector<int> lastRet;
         // ChatGLMBlock
         int version = GetVersion();
@@ -244,7 +245,6 @@ namespace fastllm {
                 AddTo(hiddenStates, attnOutput);
                 std::string postRMSWeightName =
                         "transformer.encoder.layers." + std::to_string(i) + ".post_attention_layernorm.weight";
-                Data temp;
                 Mul(hiddenStates, 1.0, temp);
                 RMSNorm(hiddenStates, weight[postRMSWeightName], 1e-5, mlpInput);
                 // 1.4 MLP
@@ -871,8 +871,8 @@ namespace fastllm {
                                 } else {
                                     if (it.second->currentTokens.size() < 2 ||
                                         it.second->currentTokens[0] != 64790) {
-                                        ids.insert(ids.begin(), 64792);
-                                        ids.insert(ids.begin(), 64790);
+                                        ids.insert(ids.begin() + (ids.size() - it.second->currentTokens.size()), 64790);
+                                        ids.insert(ids.begin() + (ids.size() - it.second->currentTokens.size()), 64792);
                                         seqLen += 2;
                                     }
                                 }
