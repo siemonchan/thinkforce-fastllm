@@ -45,7 +45,22 @@ namespace fastllm {
 
     void BaseDevice::Run(const std::string &opType, const fastllm::DataDict &datas,
                          const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
+#ifdef DEBUG
+        auto st = chrono::system_clock::now();
+#endif
         this->ops[opType]->Run(opType, datas, floatParams, intParams);
+#ifdef DEBUG
+        auto end = chrono::system_clock::now();
+        this->ops[opType]->profile.Write(GetSpan(st, end), this->ops[opType]->Ops(opType, datas, floatParams, intParams));
+#endif
+    }
+
+    void BaseDevice:: Profile(bool silent) {
+        for (auto op : ops) {
+            string opType = op.first;
+            BaseOperator *opObject = op.second;
+            opObject->profile.Profile(opType, deviceType, silent);
+        }
     }
 
     bool BaseOperator::CanRun(const std::string &opType, const DataDict &datas, const FloatDict &floatParams,
@@ -64,5 +79,10 @@ namespace fastllm {
 
         output.dataType = input.dataType;
         output.Resize(input.dims);
+    }
+
+    uint64_t BaseOperator::Ops(const std::string &opType, const DataDict &datas, const FloatDict &floatParams,
+                               const IntDict &intParams) {
+        return 0;
     }
 }

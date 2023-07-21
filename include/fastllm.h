@@ -304,6 +304,24 @@ namespace fastllm {
         Data &operator [] (const std::string &key);
     };
 
+    struct ProfileType {
+        double spend;
+        uint64_t ops;
+        uint64_t long_ops;
+
+        ProfileType() {
+            Clear();
+        }
+
+        void Clear();
+
+        bool Empty();
+
+        void Write(double duration, uint64_t op);
+
+        void Profile(const string &opType, const string &deviceName, bool silent = false);
+    };
+
     int LLMSampling(Data &logits, int outerOffset,
                     const GenerationConfig &config, const LastTokensUnit &tokens); // 对logits里[outerOffset * vocabSize, (outerOffset + 1) * vocabSize]做Sampling
 
@@ -356,6 +374,8 @@ namespace fastllm {
     void LlamaRotatePosition2D(Data &input, const Data &positionIds, Data &sinData, Data &cosData, int rotaryDim); // 2D position for llama
 
     void RepeatPenalty(Data &input, const Data &penalty); // 惩罚，input[i] = input[i] < 0 ? input[i] * penalty[i] : input[i] / penalty[i];
+
+    void ProfileExecutor(bool silent = false);
 }
 
 #endif //TEST_FASTLLM_H

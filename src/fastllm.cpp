@@ -1164,6 +1164,38 @@ namespace fastllm {
         return weight[key];
     }
 
+    void ProfileType::Clear() {
+        spend = 0.;
+        ops = 0;
+        long_ops = 0;
+    }
+
+    bool ProfileType::Empty() {
+        return spend == 0. && ops == 0 && long_ops == 0;
+    }
+
+    void ProfileType::Write(double duration, uint64_t op) {
+        spend += duration;
+        ops += op;
+        long_ops += (ops >> 30);
+        ops -= (ops >> 30 << 30);
+    }
+
+    void ProfileType::Profile(const string &opType, const string &deviceName, bool silent) {
+        if (Empty() || silent) {
+            Clear();
+            return;
+        }
+        if (ops || long_ops) {
+            printf("%-17sdevice:%7s cost: %8.2fms speed: %8.2fGop/s\n", 
+                    opType.c_str(), deviceName.c_str(), spend * 1000., (long_ops + (double) ops / (1024 * 1024 * 1024)) / spend);
+        } else {
+            printf("%-17sdevice:%7s cost: %8.2fms\n", opType.c_str(), deviceName.c_str(), spend * 1000.);
+        }
+        
+        Clear();
+    }
+
     void Embedding(const Data &input, Data &weight, Data &output) {
         curExecutor->Run("Embedding", {
                 {"input", (Data*)&input}, {"weight", &weight}, {"output", &output}
@@ -1322,5 +1354,9 @@ namespace fastllm {
         curExecutor->Run("RepeatPenalty", {
                 {"input", &input}, {"penalty", (Data*)&penalty}
         }, {}, {});
+    }
+
+    void ProfileExecutor(bool silent) {
+        curExecutor->Profile(silent);
     }
 }

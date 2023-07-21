@@ -64,4 +64,10 @@ namespace fastllm {
         }
 //printf("%s spend %f s.\n", opType.c_str(), GetSpan(st, std::chrono::system_clock::now()));
     }
+
+    void Executor::Profile(bool silent) {
+        for (auto device : devices) {
+            device->Profile(silent);
+        }
+    }
 }

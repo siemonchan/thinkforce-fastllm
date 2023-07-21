@@ -23,6 +23,9 @@ namespace fastllm {
         // 运行一个op
         void Run(const std::string &opType, const fastllm::DataDict &datas, const fastllm::FloatDict &floatParams,
                  const fastllm::IntDict &intParams);
+
+        // 按照optype打印运行细节
+        void Profile(bool silent = false);
     };
 }
 

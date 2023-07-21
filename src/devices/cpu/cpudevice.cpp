@@ -1359,7 +1359,14 @@ float gops = (float)n * m * k / spend / 1e9;
             for (int i = 0; i < n; i++) {
                 for (int j = 0; j < m; j++) {
                     float now = input0Data[i * input0Stride + j] * alpha;
-                    for (int l = 0; l < k; l++) {
+                    int l = 0;
+#ifdef __arrch64__
+                    float32x4_t nowx4 = vdup_n_f32(now);
+                    for (; l + 3 < k; l += 4) {
+                        vst1q_f32(outputData + i * k + l, vmul(nowx4, vld1q_f32(input1Data + j * k + l)));
+                    }
+#endif
+                    for (; l < k; l++) {
                         outputData[i * k + l] += (now * input1Data[j * k + l]);
                     }
                 }
@@ -1479,6 +1486,14 @@ float gops = (float)n * m * k / spend / 1e9;
         }
     }
 
+    uint64_t CpuMatMulOp::Ops(const std::string &opType, const DataDict &datas, 
+                              const FloatDict &floatParams, const IntDict &intParams) {
+        Data &input0 = *(datas.find("input0")->second);
+        Data &input1 = *(datas.find("input1")->second);
+        int k = input1.dims[input1.dims.size() - 1];
+        return (uint64_t) k * input0.Count(0);
+    }
+
     void CpuMatMulTransBOp::Reshape(const std::string &opType, const fastllm::DataDict &datas,
                                     const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
         Data &input0 = *(datas.find("input0")->second);
@@ -1550,6 +1565,14 @@ float gops = (float)n * m * k / spend / 1e9;
         for (int i = 0; i < futures.size(); i++) {
             futures[i].get();
         }
+    }
+
+    uint64_t CpuMatMulTransBOp::Ops(const std::string &opType, const fastllm::DataDict &datas,
+                                    const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
+        Data &input0 = *(datas.find("input0")->second);
+        Data &input1 = *(datas.find("input1")->second);
+        int k = input1.dims[input1.dims.size() - 2];
+        return (uint64_t) k * input0.Count(0);
     }
 
     void CpuSoftMaxOp::Run(const std::string &opType, const fastllm::DataDict &datas,
@@ -1663,23 +1686,14 @@ float gops = (float)n * m * k / spend / 1e9;
         }
     }
 
-    void CpuGeluNewOp::Run(const std::string &opType, const fastllm::DataDict &datas,
-                           const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
-        Data &input = *(datas.find("input")->second);
-        Data &output = *(datas.find("output")->second);
-        output.Allocate();
-        AssertInFastLLM(input.dataType == DataType::FLOAT32, "GeluNew error: Data's type should be float32.\n");
-
-        float *inputData = (float*)input.cpuData;
-        float *outputData = (float*)output.cpuData;
-        int len = input.Count(0);
-        int i = 0;
-#ifdef __aarch64__
+    void FloatGeluNewPart(float *inputData, float *outputData, int len) {
+        #ifdef __aarch64__
         float32x4_t c0 = vdupq_n_f32(0.044715f);
         float32x4_t c1 = vdupq_n_f32(1.0f);
         float32x4_t c2 = vdupq_n_f32(0.7978845608028654f);
         float32x4_t c3 = vdupq_n_f32(0.5f);
 
+        int i = 0;
         for (; i + 3 < len; i += 4) {
             float32x4_t vx = vld1q_f32(inputData + i);
             float32x4_t v1 = vaddq_f32(c1, vmulq_f32(vmulq_f32(c0, vx), vx));
@@ -1743,6 +1757,33 @@ float gops = (float)n * m * k / spend / 1e9;
         for (; i < len; i++) {
             float x = inputData[i];
             outputData[i] = 0.5f * x * (1.0f + tanhf(0.7978845608028654f * x * (1.0f + 0.044715f * x * x)));
+        }
+    }
+
+    void CpuGeluNewOp::Run(const std::string &opType, const fastllm::DataDict &datas,
+                           const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+        output.Allocate();
+        AssertInFastLLM(input.dataType == DataType::FLOAT32, "GeluNew error: Data's type should be float32.\n");
+
+        float *inputData = (float*)input.cpuData;
+        float *outputData = (float*)output.cpuData;
+        int len = input.Count(0);
+        int threadNum = GetThreads();
+        int per = len / threadNum;
+        int last = len - (threadNum - 1) * per;
+
+        auto pool = GetPool();
+        std::vector <std::future <void> > futures;
+        int start = 0;
+        for (int i = 0; i < threadNum - 1; i++) {
+            futures.push_back(pool->Submit(FloatGeluNewPart, inputData + start, outputData + start, per));
+            start += per;
+        }
+        FloatGeluNewPart(inputData + start, outputData + start, last);
+        for (int i = 0; i < futures.size(); i++) {
+            futures[i].get();
         }
     }
 

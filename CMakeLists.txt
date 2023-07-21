@@ -8,11 +8,15 @@ option(USE_TFACC "use tfacc" ON)
 
 option(PY_API "python api" OFF)
 
+option(DEBUG "print debug information" OFF)
+
 message(STATUS "USE_CUDA: ${USE_CUDA}")
 
-message(STATUS "USE_TFACC: %{USE_TFACC}")
+message(STATUS "USE_TFACC: ${USE_TFACC}")
 
 message(STATUS "PYTHON_API: ${PY_API}")
+
+message(STATUS "DEBUG: ${DEBUG}")
 
 set(CMAKE_BUILD_TYPE "Release")
 
@@ -33,6 +37,10 @@ set(FASTLLM_CXX_SOURCES src/fastllm.cpp src/device.cpp src/model.cpp src/executo
 include_directories(include)
 include_directories(include/utils)
 include_directories(include/models)
+
+if (DEBUG)
+    add_compile_definitions(DEBUG)
+endif()
 
 if (USE_CUDA)
     enable_language(CUDA)

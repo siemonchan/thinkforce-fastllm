@@ -22,6 +22,11 @@ namespace fastllm {
 
         // 对某一个算子进行推理
         virtual void Run(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams) = 0;
+
+        // 计算某一个算子的运算次数
+        virtual uint64_t Ops(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams);
+
+        ProfileType profile = ProfileType();
     };
 
     class BaseDevice {
@@ -44,6 +49,9 @@ namespace fastllm {
 
         // 对某一个算子进行推理
         virtual void Run(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams);
+
+        // 打印device下每个算子的运行细节
+        void Profile(bool silent = false);
 
         std::string deviceType;
         std::string deviceName;

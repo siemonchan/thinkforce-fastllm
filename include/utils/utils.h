@@ -30,9 +30,19 @@ namespace fastllm {
 #endif
     }
 
-    static void ErrorInFastLLM(const std::string &error) {
-        printf("FastLLM Error: %s\n", error.c_str());
+    #define ErrorInFastLLM(error) \
+        ErrorInFastLLMCore(error, __func__);
+    
+    #define WarningInFastLLM(warning) \
+        WarningInFastLLMCore(warning, __func__);
+
+    static void ErrorInFastLLMCore(const std::string &error, const char *f) {
+        printf("FastLLM Error @ %s: %s\n", f, error.c_str());
         throw error;
+    }
+
+    static void WarningInFastLLMCore(const std::string &warning, const char *f) {
+        printf("FastLLM Warning @ %s: %s\n", f, warning.c_str());
     }
 
     static void AssertInFastLLM(bool condition, const std::string &error) {
