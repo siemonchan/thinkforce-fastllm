@@ -79,8 +79,6 @@ namespace fastllm {
 
         virtual void WarmUp() {}; // 预热
 
-        virtual void ProfileModel(bool silent = false); // 打印模型上一次profile到现在为止的运行信息
-
         virtual std::string MakeInput(const std::string &history, int round, const std::string &input) = 0; // 根据历史信息和当前输入生成prompt
 
         virtual std::string MakeHistory(const std::string &history, int round, const std::string &input, const std::string &output) = 0; // 根据当前回复更新history

@@ -3,9 +3,11 @@
 //
 
 #include "devices/tfacc/tfaccdevice.h"
+#include "devices/tfacc/fastllm-tfacc.h"
 
 #include <cstring>
 #include <thread>
+#include <numa.h>
 
 #include <cfloat>
 #include <cmath>
@@ -43,19 +45,25 @@ namespace fastllm {
         this->ops["Linear"] = (BaseOperator *) (new TfaccLinearOp());
 
         // disable all tfacc cache
-        for (int i = 0; i < 8 * TF_TFNN_GetChipNum(); i++) {
-            tfacc40t::BlasopList *blasopList = new tfacc40t::BlasopList(TF_TFNN_GetChipId(i), 100);
-            AddTFACCRegisterBlasop(blasopList, CACHE_INIT_REQ, 1);
-            AddTFACCRegisterBlasop(blasopList, CACHE_ADDR_MAP0_LOW_0_31, 0);
-            AddTFACCRegisterBlasop(blasopList, CACHE_ADDR_MAP0_LOW_32_63, 0);
-            AddTFACCRegisterBlasop(blasopList, CACHE_ADDR_MAP0_HI_0_31, 0);
-            AddTFACCRegisterBlasop(blasopList, CACHE_ADDR_MAP0_HI_32_63, 0);
-            AddTFACCRegisterBlasop(blasopList, UNCACHE_ADDR_MAP0_LOW_0_31, 0);
-            AddTFACCRegisterBlasop(blasopList, UNCACHE_ADDR_MAP0_LOW_32_63, 0);
-            AddTFACCRegisterBlasop(blasopList, UNCACHE_ADDR_MAP0_HI_0_31, 0xffffffff);
-            AddTFACCRegisterBlasop(blasopList, UNCACHE_ADDR_MAP0_HI_32_63, 0xffffffff);
-            blasopList->Run(i);
-            delete blasopList;
+        int numaMemMask = numa_get_membind_compat().n[0];
+        for (int i = 0; i < TF_TFNN_GetChipNum(); i++) {
+            if (!(numaMemMask & (1 << i))) {
+                continue;
+            }
+            for (int j = 0; j < 8; j++) {
+                tfacc40t::BlasopList *blasopList = new tfacc40t::BlasopList(TF_TFNN_GetChipId(i * 8 + j), 100);
+                AddTFACCRegisterBlasop(blasopList, CACHE_INIT_REQ, 1);
+                AddTFACCRegisterBlasop(blasopList, CACHE_ADDR_MAP0_LOW_0_31, 0);
+                AddTFACCRegisterBlasop(blasopList, CACHE_ADDR_MAP0_LOW_32_63, 0);
+                AddTFACCRegisterBlasop(blasopList, CACHE_ADDR_MAP0_HI_0_31, 0);
+                AddTFACCRegisterBlasop(blasopList, CACHE_ADDR_MAP0_HI_32_63, 0);
+                AddTFACCRegisterBlasop(blasopList, UNCACHE_ADDR_MAP0_LOW_0_31, 0);
+                AddTFACCRegisterBlasop(blasopList, UNCACHE_ADDR_MAP0_LOW_32_63, 0);
+                AddTFACCRegisterBlasop(blasopList, UNCACHE_ADDR_MAP0_HI_0_31, 0xffffffff);
+                AddTFACCRegisterBlasop(blasopList, UNCACHE_ADDR_MAP0_HI_32_63, 0xffffffff);
+                blasopList->Run(i * 8 + j);
+                delete blasopList;
+            }
         }
     }
 
@@ -132,38 +140,17 @@ namespace fastllm {
             float *outputData = (float *) output.cpuData;
             float *biasData = bias.dims.size() > 0 ? (float *) bias.cpuData : nullptr;
 
-            tfdl::TFDataFloat *tf_input = new tfdl::TFDataFloat({n, m}, inputData);
-            tfdl::TFDataInt8 *tf_weight = new tfdl::TFDataInt8(0.f, 0.f, {k, m}, weightData);
-            tfdl::TFDataFloat *tf_output = new tfdl::TFDataFloat({n, k}, outputData);
-            tfdl::TFDataFloat *tf_bias = biasData ? new tfdl::TFDataFloat({k}, biasData) : nullptr;
-
             AssertInFastLLM(weight.tfWeightConfig.axis == 0, 
                             "Think Force`s TFACC only support per channel config on axis 0.");
             AssertInFastLLM(weight.tfWeightConfig.configs.size() == k, 
                             "Linear`s weight config size doesn`t match the requirement of Think Force`s TFACC");
-            tf_weight->SetPerChannelConfig(weight.tfWeightConfig);
 
             int threadNum = min(TF_TFNN_GetChipNum() * 8, GetThreads());
-            tfacc40t::LinearMultiCore(tf_input, tf_output, tf_weight, tf_bias, threadNum);
-
-            delete tf_input;
-            delete tf_output;
-            delete tf_weight;
-            delete tf_bias;
+            auto pool = GetPool();
+            FastllmTfaccLinearMultiCore(inputData, outputData, weightData, biasData, n, m, k, weight.tfWeightConfig, threadNum, pool);
         } else {
             ErrorInFastLLM("TFACC Linear error: unsupport weight's dataType.\n");
         }
-    }
-
-    uint64_t TfaccLinearOp::Ops(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams) {
-        Data &input = *(datas.find("input")->second);
-        Data &output = *(datas.find("output")->second);
-
-        int n = input.Count(0) / input.dims.back();
-        int m = input.dims.back();
-        int k = output.dims.back();
-
-        return (uint64_t) n * m * k;
     }
 
     bool TfaccMatMulOp::CanRun(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams) {
@@ -344,20 +331,6 @@ namespace fastllm {
         for (int i = 0; i < futures.size(); i++) {
             futures[i].get();
         }
-    }
-
-    uint64_t TfaccMatMulTransBOp::Ops(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, 
-                                      const IntDict &intParams) {
-        Data &input0 = *(datas.find("input0")->second);
-        Data &input1 = *(datas.find("input1")->second);
-        Data &output = *(datas.find("output")->second);
-
-        int batch = input0.dims[0];
-        int n = input0.dims[input0.dims.size() - 2];
-        int m = input0.dims.back();
-        int k = input1.dims[input1.dims.size() - 2];
-
-        return (uint64_t) batch * n * m * k;
     }
 
     float GeluNewKernel(float x) {

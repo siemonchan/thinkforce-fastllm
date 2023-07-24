@@ -45,6 +45,14 @@ namespace fastllm {
         this->ops["NearlyRotatePosition2D"] = (BaseOperator*)(new CpuNearlyRotatePosition2DOp());
         this->ops["LlamaRotatePosition2D"] = (BaseOperator*)(new CpuLlamaRotatePosition2DOp());
         this->ops["RepeatPenalty"] = (BaseOperator*)(new CpuRepeatPenaltyOp());
+
+        this->ops["SplitBatch"] = (BaseOperator*)(new CpuSplitBatchOp());
+        this->ops["CatBatch"] = (BaseOperator*)(new CpuCatBatchOp());
+        this->ops["MulBatch"] = (BaseOperator*)(new CpuMulBatchOp());
+        this->ops["MatMulBatch"] = (BaseOperator*)(new CpuMatMulBatchOp());
+        this->ops["MatMulTransBBatch"] = (BaseOperator*)(new CpuMatMulTransBBatchOp());
+        this->ops["SoftMaxBatch"] = (BaseOperator*)(new CpuSoftmaxBatchOp());
+        this->ops["CatDirectBatch"] = (BaseOperator*)(new CpuCatDirectBatchOp());
     }
 
     bool CpuDevice::Malloc(void **ret, size_t size) {
@@ -959,7 +967,7 @@ namespace fastllm {
 
     void CpuLinearOp::Run(const std::string &opType, const fastllm::DataDict &datas,
                           const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
-auto st = std::chrono::system_clock::now();
+//auto st = std::chrono::system_clock::now();
         Data &input = *(datas.find("input")->second);
         Data &output = *(datas.find("output")->second);
         Data &weight = *(datas.find("weight")->second);
@@ -1159,8 +1167,8 @@ auto st = std::chrono::system_clock::now();
         } else {
             ErrorInFastLLM("Linear error: unsupport weight's dataType.\n");
         }
-float spend = GetSpan(st, std::chrono::system_clock::now());
-float gops = (float)n * m * k / spend / 1e9;
+//float spend = GetSpan(st, std::chrono::system_clock::now());
+//float gops = (float)n * m * k / spend / 1e9;
 // printf("n = %d, m = %d, k = %d, spend %f s, gops = %f\n", n, m, k, spend, gops);
     }
 
@@ -1486,14 +1494,6 @@ float gops = (float)n * m * k / spend / 1e9;
         }
     }
 
-    uint64_t CpuMatMulOp::Ops(const std::string &opType, const DataDict &datas, 
-                              const FloatDict &floatParams, const IntDict &intParams) {
-        Data &input0 = *(datas.find("input0")->second);
-        Data &input1 = *(datas.find("input1")->second);
-        int k = input1.dims[input1.dims.size() - 1];
-        return (uint64_t) k * input0.Count(0);
-    }
-
     void CpuMatMulTransBOp::Reshape(const std::string &opType, const fastllm::DataDict &datas,
                                     const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
         Data &input0 = *(datas.find("input0")->second);
@@ -1565,14 +1565,6 @@ float gops = (float)n * m * k / spend / 1e9;
         for (int i = 0; i < futures.size(); i++) {
             futures[i].get();
         }
-    }
-
-    uint64_t CpuMatMulTransBOp::Ops(const std::string &opType, const fastllm::DataDict &datas,
-                                    const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
-        Data &input0 = *(datas.find("input0")->second);
-        Data &input1 = *(datas.find("input1")->second);
-        int k = input1.dims[input1.dims.size() - 2];
-        return (uint64_t) k * input0.Count(0);
     }
 
     void CpuSoftMaxOp::Run(const std::string &opType, const fastllm::DataDict &datas,

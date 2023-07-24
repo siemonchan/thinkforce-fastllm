@@ -24,7 +24,6 @@ namespace fastllm {
         bool CanRun(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams);
         void Reshape(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams);
         void Run(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams);
-        uint64_t Ops(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams);
     };
 
     class TfaccMatMulOp : BaseOperator {
@@ -37,7 +36,6 @@ namespace fastllm {
         bool CanRun(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams);
         void Reshape(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams);
         void Run(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams);
-        uint64_t Ops(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams);
     };
     
     class TfaccGeluNewOp : BaseOperator {

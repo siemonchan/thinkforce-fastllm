@@ -1,12 +1,14 @@
 cmake_minimum_required(VERSION 3.5)
 
 project(fastllm LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
 
 option(USE_CUDA "use cuda" OFF)
 
 option(USE_TFACC "use tfacc" ON)
 
 option(PY_API "python api" OFF)
+option(USE_MMAP "use mmap" OFF)
 
 option(DEBUG "print debug information" OFF)
 
@@ -31,15 +33,15 @@ endif()
 
 message(STATUS "CMAKE_CXX_FLAGS" ${CMAKE_CXX_FLAGS})
 set(FASTLLM_CXX_SOURCES src/fastllm.cpp src/device.cpp src/model.cpp src/executor.cpp
-        src/devices/cpu/cpudevice.cpp
+        src/devices/cpu/cpudevice.cpp src/devices/cpu/cpudevicebatch.cpp
         src/models/chatglm.cpp src/models/moss.cpp src/models/llama.cpp src/models/basellm.cpp)
 
 include_directories(include)
 include_directories(include/utils)
 include_directories(include/models)
 
-if (DEBUG)
-    add_compile_definitions(DEBUG)
+if (USE_MMAP)
+    add_compile_definitions(USE_MMAP)
 endif()
 
 if (USE_CUDA)
@@ -47,7 +49,7 @@ if (USE_CUDA)
     add_compile_definitions(USE_CUDA)
     include_directories(include/devices/cuda)
     #message(${CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES})
-    set(FASTLLM_CUDA_SOURCES src/devices/cuda/cudadevice.cpp src/devices/cuda/fastllm-cuda.cu)
+    set(FASTLLM_CUDA_SOURCES src/devices/cuda/cudadevice.cpp src/devices/cuda/cudadevicebatch.cpp src/devices/cuda/fastllm-cuda.cu)
     set(FASTLLM_LINKED_LIBS ${FASTLLM_LINKED_LIBS} cublas)
     set(CMAKE_CUDA_ARCHITECTURES "native")
 endif()
@@ -57,7 +59,7 @@ if (USE_TFACC)
     add_definitions(-DUSE_TFDL)
     add_definitions(-DUSE_TFACC40T)
 
-    set(FASTLLM_TFACC_SOURCES src/devices/tfacc/tfaccdevice.cpp)
+    set(FASTLLM_TFACC_SOURCES src/devices/tfacc/tfaccdevice.cpp src/devices/tfacc/fastllm-tfacc.cpp)
 
     include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/tfdl/include)
     include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/tfdl/tfacc40t)
@@ -65,7 +67,7 @@ if (USE_TFACC)
     set(lib_tfacc ${CMAKE_CURRENT_SOURCE_DIR}/third_party/tfdl/build/src/lib_tfdl.so
                   ${CMAKE_CURRENT_SOURCE_DIR}/third_party/tfdl/tfacc40t/libtfnn.so
                   ${CMAKE_CURRENT_SOURCE_DIR}/third_party/tfdl/tfacc40t/libtfacc40t.so)
-    set(FASTLLM_LINKED_LIBS ${FASTLLM_LINKED_LIBS} ${lib_tfacc})
+    set(FASTLLM_LINKED_LIBS ${FASTLLM_LINKED_LIBS} ${lib_tfacc} numa)
 endif()
 
 if (PY_API)

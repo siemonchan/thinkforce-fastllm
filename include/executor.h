@@ -11,6 +11,8 @@ namespace fastllm {
     class Executor {
     private:
         std::vector <BaseDevice*> devices;
+        std::map <std::string, float> profiler;
+
     public:
         Executor (); // 创建默认的Executor
 
@@ -24,8 +26,9 @@ namespace fastllm {
         void Run(const std::string &opType, const fastllm::DataDict &datas, const fastllm::FloatDict &floatParams,
                  const fastllm::IntDict &intParams);
 
-        // 按照optype打印运行细节
-        void Profile(bool silent = false);
+        void ClearProfiler();
+
+        void PrintProfiler();
     };
 }
 

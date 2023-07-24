@@ -22,11 +22,13 @@ namespace fastllm {
 
         // 对某一个算子进行推理
         virtual void Run(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams) = 0;
+    };
 
-        // 计算某一个算子的运算次数
-        virtual uint64_t Ops(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams);
-
-        ProfileType profile = ProfileType();
+    class BaseBatchOperator : BaseOperator {
+    public:
+        // 对某一个算子进行形状推理
+        virtual void Reshape(const std::string &opType, const DataDict &datas, const FloatDict &floatParams,
+                             const IntDict &intParams);
     };
 
     class BaseDevice {

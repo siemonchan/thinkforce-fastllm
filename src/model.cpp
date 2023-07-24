@@ -48,17 +48,6 @@ namespace fastllm {
         this->weight.SaveLowBitModel(fileName, 0);
     }
 
-    void basellm::ProfileModel(bool silent) {
-#ifdef DEBUG
-        ProfileExecutor(silent);
-#else   
-        if (silent) {
-            return;
-        }
-        WarningInFastLLM("Profile only works under DEBUG mode, please add -DDEBUG when compile fastllm");
-#endif
-    }
-
     fastllm::basellm *CreateModelWithType(const std::string &modelType) {
         basellm *model;
         if (modelType == "chatglm") {
@@ -85,7 +74,6 @@ namespace fastllm {
         basellm *model = CreateModelWithType(modelType);
         model->LoadFromFile(fileName);
         model->WarmUp();
-        model->ProfileModel(true);
         return std::unique_ptr<fastllm::basellm> (model);
     }
 

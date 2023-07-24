@@ -17,6 +17,7 @@
 #include <iostream>
 #include <functional>
 #include <memory>
+#include <string_view>
 
 #include "devices/cpu/cputhreadpool.h"
 
@@ -168,6 +169,39 @@ namespace fastllm {
         NONE = 0, LINEAR = 1, EMBEDDING = 2
     };
 
+    struct FileMmap {
+    public:
+        FileMmap(const std::string &path);
+        ~FileMmap();
+
+        char *data;
+        size_t size;
+    };
+
+    struct ModelLoader {
+        ModelLoader(std::string_view buffer) : data(buffer.data()), size(buffer.size()), ptr(buffer.data()) {}
+
+        int64_t tell() const { return ptr - data; }
+
+        void seek(int64_t offset, int whence);
+
+        template <typename T>
+        T read_basic() {
+            T obj = *(T *)ptr;
+            ptr += sizeof(T);
+            return obj;
+        }
+
+        std::string ReadString();
+        int ReadInt();
+        float ReadFloat();
+        uint8_t* ReadBytes(uint64_t bytes);
+
+        const char *const data;
+        size_t size;
+        const char *ptr;
+    };
+
     class Data {
     public:
         bool lockInCPU = false; // 如果lock在CPU上，那么不允许移动到其余设备
@@ -204,6 +238,7 @@ namespace fastllm {
 
         std::string fileName;
         long long filePos;
+        std::shared_ptr<FileMmap> m_file;
 
         Data () {};
 
@@ -250,6 +285,10 @@ namespace fastllm {
         void ToDevice(DataDevice device); // 移动到指定device
 
         void ToDevice(void *device);
+
+        void set_file(std::shared_ptr<FileMmap> file) {
+            m_file = file;
+        }
     };
 
     struct Tokenizer {
@@ -304,23 +343,9 @@ namespace fastllm {
         Data &operator [] (const std::string &key);
     };
 
-    struct ProfileType {
-        double spend;
-        uint64_t ops;
-        uint64_t long_ops;
+    void ClearProfiler();
 
-        ProfileType() {
-            Clear();
-        }
-
-        void Clear();
-
-        bool Empty();
-
-        void Write(double duration, uint64_t op);
-
-        void Profile(const string &opType, const string &deviceName, bool silent = false);
-    };
+    void PrintProfiler();
 
     int LLMSampling(Data &logits, int outerOffset,
                     const GenerationConfig &config, const LastTokensUnit &tokens); // 对logits里[outerOffset * vocabSize, (outerOffset + 1) * vocabSize]做Sampling
@@ -375,7 +400,19 @@ namespace fastllm {
 
     void RepeatPenalty(Data &input, const Data &penalty); // 惩罚，input[i] = input[i] < 0 ? input[i] * penalty[i] : input[i] / penalty[i];
 
-    void ProfileExecutor(bool silent = false);
+    void MulBatch(std::vector <Data*> &input, float v, std::vector <Data*> &output);
+
+    void SplitBatch(const Data &input, int axis, int part, std::vector <Data*> &outputs); // 将input沿着axis轴切开，每份axis上的尺寸为1，放到outputs里
+
+    void CatBatch(std::vector <Data*> &input, int axis, Data &outputs); // 将input沿着axis轴合起来，每份axis上的尺寸为1，放到output里
+
+    void MatMulBatch(std::vector <Data*> &input0, std::vector <Data*> &input1, std::vector <Data*> &output, float alpha = 1.0);
+
+    void MatMulTransBBatch(std::vector <Data*> &input0, std::vector <Data*> &input1, std::vector <Data*> &output, float alpha = 1.0);
+
+    void SoftmaxBatch(std::vector <Data*> &input, std::vector <Data*> &output, int axis);
+
+    void CatDirectBatch(std::vector <Data*> &input0, std::vector <Data*> &input1, int axis);
 }
 
 #endif //TEST_FASTLLM_H
