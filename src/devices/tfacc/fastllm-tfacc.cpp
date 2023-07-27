@@ -284,11 +284,11 @@ void FastllmTfaccLinearMultiCore(float *input, float *output, uint8_t *weight, f
         //     }
         // }
         // fake_weight.clear();
-        printf("%s * %s -> %s, Cores: %d, Gops: %.2f\n", input_tf->GetShapeString().c_str(), 
-               weight_tf->GetShapeString().c_str(), output_tf->GetShapeString().c_str(), (int) tfaccs.size(), 
-               ((float) m * k * n / 1000 / 1000 / 1000) / GetSpan(t0, t3));
-        printf("multicore linear time: prepare: %.2fms; run blasop: %.2fms, postprocess: %.2fms\n", 
-               GetSpan(t0, t1) * 1000, GetSpan(t1, t2) * 1000, GetSpan(t2, t3) * 1000);
+        // printf("%s * %s -> %s, Cores: %d, Gops: %.2f\n", input_tf->GetShapeString().c_str(), 
+        //        weight_tf->GetShapeString().c_str(), output_tf->GetShapeString().c_str(), (int) tfaccs.size(), 
+        //        ((float) m * k * n / 1000 / 1000 / 1000) / GetSpan(t0, t3));
+        // printf("multicore linear time: prepare: %.2fms; run blasop: %.2fms, postprocess: %.2fms\n", 
+        //        GetSpan(t0, t1) * 1000, GetSpan(t1, t2) * 1000, GetSpan(t2, t3) * 1000);
     }
     // cut output features
     else {
@@ -382,11 +382,11 @@ void FastllmTfaccLinearMultiCore(float *input, float *output, uint8_t *weight, f
         }
 
         auto t3 = chrono::system_clock::now();
-        printf("%s * %s -> %s, Cores: %d, Gops: %.2f\n", input_tf->GetShapeString().c_str(), 
-               weight_tf->GetShapeString().c_str(), output_tf->GetShapeString().c_str(), (int) tfaccs.size(), 
-               ((float) m * k * n / 1000 / 1000 / 1000) / GetSpan(t0, t3));
-        printf("multicore linear time: prepare: %.2fms; run blasop: %.2fms, postprocess: %.2fms\n", 
-               GetSpan(t0, t1) * 1000, GetSpan(t1, t2) * 1000, GetSpan(t2, t3) * 1000);
+        // printf("%s * %s -> %s, Cores: %d, Gops: %.2f\n", input_tf->GetShapeString().c_str(), 
+        //        weight_tf->GetShapeString().c_str(), output_tf->GetShapeString().c_str(), (int) tfaccs.size(), 
+        //        ((float) m * k * n / 1000 / 1000 / 1000) / GetSpan(t0, t3));
+        // printf("multicore linear time: prepare: %.2fms; run blasop: %.2fms, postprocess: %.2fms\n", 
+        //        GetSpan(t0, t1) * 1000, GetSpan(t1, t2) * 1000, GetSpan(t2, t3) * 1000);
     }
 
     delete input_tf;
