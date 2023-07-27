@@ -62,6 +62,13 @@ void FastllmTfaccCopyStride(pointerType *dst, pointerType *src, int len, int rou
     }
 }
 
+void FastllmTfaccQuantization(uint8_t *dst, float *src, int len, int round, int dst_stride, int src_stride, 
+                              tfdl::QuantizationConfig config) {
+    for (int i = 0; i < round; i++) {
+        config.quantall(len, src + i * src_stride, dst + i * dst_stride);
+    }
+}
+
 void FastllmTfaccLinearMultiCore(float *input, float *output, uint8_t *weight, float *bias, int n, int m, int k,
                                  const tfdl::PerChannelConfig &tfWeightConfig, int threadNum, fastllm::ThreadPool *pool) {
     int chipNum = TF_TFNN_GetChipNum();
@@ -402,7 +409,7 @@ void FastllmTfaccLinearMultiCoreAuto(float *input, float *output, uint8_t *weigh
     // collect all available tfacc cores
     vector<int> all_tfacc = ConfigureTFACC(8 * TF_TFNN_GetChipNum(), TF_TFNN_GetChipNum());
 
-    int per_n = 64;
+    int per_n = 128;
     int n_round = (n - 1) / per_n + 1;
     if (n_round > 1) {
         for (int i = 0; i < n_round; i++) {
@@ -411,6 +418,7 @@ void FastllmTfaccLinearMultiCoreAuto(float *input, float *output, uint8_t *weigh
             float *cur_output = output + i * cur_n * k;
             FastllmTfaccLinearMultiCoreAuto(cur_input, cur_output, weight, bias, cur_n, m, k, tfWeightConfig, pool);
         }
+        return;
     }
 
     int per_m = 4096;
@@ -505,11 +513,9 @@ void FastllmTfaccLinearMultiCoreAuto(float *input, float *output, uint8_t *weigh
         vector<future<void>> futures;
         for (int i = 0; i < m_round; i++) {
             int cur_m = min(per_m, m - (i * per_m));
-            futures.push_back(pool->Submit([](float *src, uint8_t *dst, int n, int m, int per_m, int cur_m, int i, tfdl::QuantizationConfig quantization){          
-                for (int o = 0; o < n; o++) {
-                    quantization.quantall(cur_m, src + o * m + i * per_m, dst + o * cur_m);
-                }
-            }, input, temp_input[i]->GetInt8RawData(), n, m, per_m, cur_m, i, quantization));
+            futures.push_back(pool->Submit([](uint8_t *dst, float *src, int len, int round, int dst_stride, int src_stride, tfdl::QuantizationConfig config){          
+                FastllmTfaccQuantization(dst, src, len, round, dst_stride, src_stride, config);
+            }, temp_input[i]->GetInt8RawData(), input + i * per_m, cur_m, n, cur_m, m, quantization));
         }
         for (auto &one_future : futures) {
             one_future.get();
