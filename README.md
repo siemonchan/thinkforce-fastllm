@@ -33,8 +33,16 @@ make -j
 ./webui -p chatglm-6b-int8.bin -t 16
 ```
 
+## 推理速度
+
+ChatGLM-6B:
+|       平台|   batch 16|   batch 64|  batch 256|
+|----------:|----------:|----------:|----------:|
+|     TF7180|       31.5|       68.4|       84.3|
+| AMD 5975WX|       32.3|       35.9|       39.3|
+
 ---
-# originall fastllm README:
+# Original fastllm README:
 
 ## 介绍
 
