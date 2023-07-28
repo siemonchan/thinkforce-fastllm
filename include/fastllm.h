@@ -42,6 +42,7 @@ namespace fastllm {
         int top_k = 1; // top_k采样
         float top_p = 1.0; // top_p采样
         float temperature = 1.0; // 温度参数，一般在0.1 ~ 1.0之间，设大这个参数可以带来结果的多样性
+		bool enable_hash_id = false; //给会话添加hash id
 
         bool IsSimpleGreedy() const {
             if (fabs(repeat_penalty - 1) > 1e-8) {
@@ -116,10 +117,15 @@ namespace fastllm {
         }
 
         void Reset() {
-            if (type == 1) {
+            /*if (type == 1) {
                 this->scale = (max - min) / 15.0;
                 return;
-            }
+            }*/
+            /*if (type == 1) {
+                this->scale = std::max(fabs(max), fabs(min)) / 7.0;
+                this->min = this->scale * (-7.0);
+                return;
+            }*/
             min = std::min(min, 0.f);
             max = std::max(max, 0.f);
 
@@ -134,6 +140,11 @@ namespace fastllm {
                 zeroPoint = qmax;
             } else {
                 zeroPoint = static_cast<uint8_t>(std::round(initial_zero_point));
+            }
+
+            if (type == 1) {
+                this->min = -this->scale * zeroPoint;
+                return;
             }
         }
 
@@ -342,6 +353,9 @@ namespace fastllm {
 
         void AddWeight(const std::string &key, const std::vector <int> &dims,
                        DataType dataType, WeightType weightType, DataType oriDataType, uint8_t *oriData); // 插入一个权重
+
+        void AddQLinearWeight(const std::string &key, const std::vector <int> &dims,
+                              int bit, float *scales, uint8_t *oriData); // 插入一个Qlinear层的权重，量化规则为float value = scales * oriData
 
         Data &operator [] (const std::string &key);
     };

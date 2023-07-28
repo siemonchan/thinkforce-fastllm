@@ -14,6 +14,10 @@
 
 #include <map>
 
+#include <sstream>
+
+#include <unordered_map>
+
 #ifdef USE_CUDA
 #include "fastllm-cuda.cuh"
 #endif
@@ -116,7 +120,6 @@ namespace fastllm {
             std::string qkvWeightName = weightPre + std::to_string(i) + weightMiddle + ".query_key_value.weight";
             std::string qkvBiasName = weightPre + std::to_string(i) + weightMiddle + ".query_key_value.bias";
             Linear(attenInput, weight[qkvWeightName], weight[qkvBiasName], qkv);
-
             if (version == 1) {
                 qkv.Reshape({qkv.dims[0], qkv.dims[1], num_attention_heads, -1});
                 int per = qkv.dims.back() / 3;
@@ -636,7 +639,14 @@ namespace fastllm {
 #ifdef USE_CUDA
         FastllmCudaClearBigBuffer();
 #endif
+#ifdef PY_API
+		size_t pos = input.find_last_of("time_stamp:");
+		std::string prompt = (generationConfig.enable_hash_id && pos != std::string::npos)?  input.substr(0, pos-10):input;
+		size_t hash_id = std::hash<std::string>{}(input);
+        Data inputIds = this->weight.tokenizer.Encode(prompt);
+#else
         Data inputIds = this->weight.tokenizer.Encode(input);
+#endif
         std::vector <float> ids;
         for (int i = 0; i < inputIds.Count(0); i++) {
             ids.push_back(((float*)inputIds.cpuData)[i]);
@@ -696,7 +706,15 @@ namespace fastllm {
             retString += curString;
 			if (retCb)
 #ifdef PY_API
-				retCb(index, pybind11::bytes(retString));
+			{
+				if(generationConfig.enable_hash_id){
+					std::stringstream ss;
+					ss << retString << "hash_id:"<<hash_id;
+					retCb(index, pybind11::bytes(ss.str()));
+				}else{
+					retCb(index, pybind11::bytes(retString));
+				}
+			}
 #else
 				retCb(index, curString.c_str());
 #endif
@@ -726,7 +744,15 @@ namespace fastllm {
         }
 		if (retCb)
 #ifdef PY_API
-			retCb(-1, pybind11::bytes(retString));
+		{
+			if(generationConfig.enable_hash_id){
+				std::stringstream ss;
+				ss << retString << "hash_id:"<<hash_id;
+				retCb(-1, pybind11::bytes(ss.str()));
+			}else{
+				retCb(-1, pybind11::bytes(retString));
+			}
+		}
 #else
 			retCb(-1, retString.c_str());
 #endif
@@ -928,12 +954,12 @@ namespace fastllm {
         if (round == 0 && GetVersion() == 1) {
             return input;
         } else {
-            return history + ("[Round " + std::to_string(round) + "]\n问：" + input + "\n答：");
+            return history + ("[Round " + std::to_string(round) + "]\n\n问：" + input + "\n\n答：");
         }
     }
 
     std::string ChatGLMModel::MakeHistory(const std::string &history, int round, const std::string &input, const std::string &output) {
-        return (history + ("[Round " + std::to_string(round) + "]\n问：" + input + "\n答：" + output + "\n"));
+        return (history + ("[Round " + std::to_string(round) + "]\n\n问：" + input + "\n\n答：" + output + "\n\n"));
     }
 
     int ChatGLMModel::LaunchResponseTokens(const std::vector<int> &inputTokens,
