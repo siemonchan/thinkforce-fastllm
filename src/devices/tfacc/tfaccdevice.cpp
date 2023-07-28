@@ -86,7 +86,11 @@ namespace fastllm {
     }
 
     bool TfaccLinearOp::CanRun(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams) {
-        return true;
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+        Data &weight = *(datas.find("weight")->second);
+        return input.dataType == DataType::FLOAT32 && output.dataType == DataType::FLOAT32 && 
+               (weight.dataType == DataType::FLOAT32 || weight.dataType == DataType::INT8);
     }
 
     void TfaccLinearOp::Reshape(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams) {
@@ -145,9 +149,10 @@ namespace fastllm {
             AssertInFastLLM(weight.tfWeightConfig.configs.size() == k, 
                             "Linear`s weight config size doesn`t match the requirement of Think Force`s TFACC");
 
-            int threadNum = min(TF_TFNN_GetChipNum() * 8, GetThreads());
+            // int threadNum = min(TF_TFNN_GetChipNum() * 8, GetThreads());
             auto pool = GetPool();
-            FastllmTfaccLinearMultiCore(inputData, outputData, weightData, biasData, n, m, k, weight.tfWeightConfig, threadNum, pool);
+            // FastllmTfaccLinearMultiCore(inputData, outputData, weightData, biasData, n, m, k, weight.tfWeightConfig, threadNum, pool);
+            FastllmTfaccLinearMultiCoreAuto(inputData, outputData, weightData, biasData, n, m, k, weight.tfWeightConfig, pool);
         } else {
             ErrorInFastLLM("TFACC Linear error: unsupport weight's dataType.\n");
         }
