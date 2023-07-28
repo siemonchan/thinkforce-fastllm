@@ -9,15 +9,11 @@ option(USE_TFACC "use tfacc" ON)
 option(PY_API "python api" OFF)
 option(USE_MMAP "use mmap" OFF)
 
-option(DEBUG "print debug information" OFF)
-
 message(STATUS "USE_CUDA: ${USE_CUDA}")
 
 message(STATUS "USE_TFACC: ${USE_TFACC}")
 
 message(STATUS "PYTHON_API: ${PY_API}")
-
-message(STATUS "DEBUG: ${DEBUG}")
 
 set(CMAKE_BUILD_TYPE "Release")
 
