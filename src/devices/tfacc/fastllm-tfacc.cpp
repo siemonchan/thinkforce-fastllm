@@ -63,9 +63,9 @@ void FastllmTfaccCopyStride(pointerType *dst, pointerType *src, int len, int rou
 }
 
 void FastllmTfaccQuantization(uint8_t *dst, float *src, int len, int round, int dst_stride, int src_stride, 
-                              tfdl::QuantizationConfig config) {
+                              tfdl::PerChannelConfig config) {
     for (int i = 0; i < round; i++) {
-        config.quantall(len, src + i * src_stride, dst + i * dst_stride);
+        config.configs[i].quantall(len, src + i * src_stride, dst + i * dst_stride);
     }
 }
 
@@ -502,20 +502,26 @@ void FastllmTfaccLinearMultiCoreAuto(float *input, float *output, uint8_t *weigh
         }
     } else {
         auto input_tf = tfdl::TFDataFloat({n, m}, input);
-        float minValue = input_tf.GetMinValue(), maxValue = input_tf.GetMaxValue();
-        auto quantization = tfdl::QuantizationConfig(minValue, maxValue);
+        tfdl::PerChannelConfig perChannelConfig;
+        for (int i = 0; i < n; i++) {
+            int st = i * m;
+            int end = i * m + m;
+            float minValue = input_tf.GetMinValue(st, end), maxValue = input_tf.GetMaxValue(st, end);
+            perChannelConfig.configs.push_back(tfdl::QuantizationConfig(minValue, maxValue));
+        }
         for (int i = 0; i < m_round; i++) {
             int cur_m = min(per_m, m - (i * per_m));
-            temp_input.push_back(new tfdl::TFDataInt8(minValue, maxValue, {n, cur_m}));
+            temp_input.push_back(new tfdl::TFDataInt8(0, 0, {n, cur_m}));
+            temp_input.back()->SetPerChannelConfig(perChannelConfig);
         }
 
         // quantize input
         vector<future<void>> futures;
         for (int i = 0; i < m_round; i++) {
             int cur_m = min(per_m, m - (i * per_m));
-            futures.push_back(pool->Submit([](uint8_t *dst, float *src, int len, int round, int dst_stride, int src_stride, tfdl::QuantizationConfig config){          
+            futures.push_back(pool->Submit([](uint8_t *dst, float *src, int len, int round, int dst_stride, int src_stride,tfdl::PerChannelConfig config){          
                 FastllmTfaccQuantization(dst, src, len, round, dst_stride, src_stride, config);
-            }, temp_input[i]->GetInt8RawData(), input + i * per_m, cur_m, n, cur_m, m, quantization));
+            }, temp_input[i]->GetInt8RawData(), input + i * per_m, cur_m, n, cur_m, m, perChannelConfig));
         }
         for (auto &one_future : futures) {
             one_future.get();
@@ -604,32 +610,32 @@ void FastllmTfaccLinearMultiCoreAuto(float *input, float *output, uint8_t *weigh
 
     // 3.add bias
     if (bias) {
-        if (n == 1) {
-            FastllmTfaccAccumulate(bias, output, output, k);
-        } else {
-            int per = max((int) (n / all_tfacc.size()), 1);
-            for (int n_iter = 0; n_iter < n;) {
-                int cur_n = min(per, n - n_iter);
+        // if (n == 1) {
+        //     FastllmTfaccAccumulate(bias, output, output, k);
+        // } else {
+        //     int per = max((int) (n / all_tfacc.size()), 1);
+        //     for (int n_iter = 0; n_iter < n;) {
+        //         int cur_n = min(per, n - n_iter);
 
-                float *bias_walk = bias;
-                float *output_walk = output + n_iter * k;
-                futures.push_back(pool->Submit([](float *dst, float *src, int round, int len) {
-                    for (int i = 0; i < round; i++) {
-                        FastllmTfaccAccumulate(dst + i * len, src, dst + i * len, len);
-                    }
-                }, output_walk, bias_walk, cur_n, k));
-                n_iter += cur_n;
-            }
-            for (auto &one_future : futures) {
-                one_future.get();
-            }
-            futures.clear();
-        }
-        // for (int o = 0; o < n; o++) {
-        //     float *bias_walk = bias;
-        //     float *output_walk = output + o * k;
-        //     FastllmTfaccAccumulate(output_walk, bias_walk, output_walk, k);
+        //         float *bias_walk = bias;
+        //         float *output_walk = output + n_iter * k;
+        //         futures.push_back(pool->Submit([](float *dst, float *src, int round, int len) {
+        //             for (int i = 0; i < round; i++) {
+        //                 FastllmTfaccAccumulate(dst + i * len, src, dst + i * len, len);
+        //             }
+        //         }, output_walk, bias_walk, cur_n, k));
+        //         n_iter += cur_n;
+        //     }
+        //     for (auto &one_future : futures) {
+        //         one_future.get();
+        //     }
+        //     futures.clear();
         // }
+        for (int o = 0; o < n; o++) {
+            float *bias_walk = bias;
+            float *output_walk = output + o * k;
+            FastllmTfaccAccumulate(output_walk, bias_walk, output_walk, k);
+        }
     }
 
     // clear temp data

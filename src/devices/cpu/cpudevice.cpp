@@ -1662,6 +1662,21 @@ namespace fastllm {
         }
     }
 
+    void FloatSiluPart(float *inputData, float *outputData, int len) {
+        int i = 0;
+#ifdef __aarch64__
+        float32x4_t one = vdupq_n_f32(1.f);
+        for (; i + 3 < len; i += 4) {
+            float32x4_t x = vld1q_f32(inputData + i);
+            vst1q_f32(outputData + i, vdivq_f32(x, vaddq_f32(one, exp_ps(vnegq_f32(x)))));
+        }
+#endif
+        for (; i < len; i++) {
+            float x = inputData[i];
+            outputData[i] = x / (1.0 + expf(-x));
+        }
+    }
+
     void CpuSiluOp::Run(const std::string &opType, const fastllm::DataDict &datas,
                         const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
         Data &input = *(datas.find("input")->second);
@@ -1671,15 +1686,25 @@ namespace fastllm {
         float *inputData = (float*)input.cpuData;
         float *outputData = (float*)output.cpuData;
         int len = input.Count(0);
-        int i = 0;
-        for (; i < len; i++) {
-            float x = inputData[i];
-            outputData[i] = x / (1.0 + expf(-x));
+        int threadNum = GetThreads();
+        int per = len / threadNum;
+        int last = len - (threadNum - 1) * per;
+        
+        auto pool = GetPool();
+        std::vector <std::future <void> > futures;
+        int start = 0;
+        for (int i = 0; i < threadNum - 1; i++) {
+            futures.push_back(pool->Submit(FloatSiluPart, inputData + start, outputData + start, per));
+            start += per;
+        }
+        FloatSiluPart(inputData + start, outputData + start, last);
+        for (int i = 0; i < futures.size(); i++) {
+            futures[i].get();
         }
     }
 
     void FloatGeluNewPart(float *inputData, float *outputData, int len) {
-        #ifdef __aarch64__
+#ifdef __aarch64__
         float32x4_t c0 = vdupq_n_f32(0.044715f);
         float32x4_t c1 = vdupq_n_f32(1.0f);
         float32x4_t c2 = vdupq_n_f32(0.7978845608028654f);
