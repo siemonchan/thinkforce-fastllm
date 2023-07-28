@@ -414,8 +414,8 @@ void FastllmTfaccLinearMultiCoreAuto(float *input, float *output, uint8_t *weigh
     if (n_round > 1) {
         for (int i = 0; i < n_round; i++) {
             int cur_n = min(per_n, n - (i * per_n));
-            float *cur_input = input + i * cur_n * m;
-            float *cur_output = output + i * cur_n * k;
+            float *cur_input = input + i * per_n * m;
+            float *cur_output = output + i * per_n * k;
             FastllmTfaccLinearMultiCoreAuto(cur_input, cur_output, weight, bias, cur_n, m, k, tfWeightConfig, pool);
         }
         return;
