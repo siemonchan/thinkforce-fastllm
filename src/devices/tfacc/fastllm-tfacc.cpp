@@ -574,13 +574,16 @@ void FastllmTfaccLinearMultiCoreAuto(float *input, float *output, uint8_t *weigh
             for (int m_iter = 1; m_iter < m_round; m_iter++) {
                 src.push_back(temp_output[k_iter * m_round + m_iter]->GetFloatRawData());
             }
-            futures.push_back(pool->Submit([](float *dst, vector<float *> src, int len){
-                for (int i = 0; i < src.size(); i++) {
-                    FastllmTfaccAccumulate(src[i], dst, dst, len);
-                }
-            }, dst, src, n * cur_k));
+            int per_n = 64;
+            for (int n_iter = 0; n_iter < n; n_iter += per_n) {
+                int cur_n = min(per_n, n - n_iter);
+                futures.push_back(pool->Submit([](float *dst, vector<float *> src, int len, int shift){
+                    for (int i = 0; i < src.size(); i++) {
+                        FastllmTfaccAccumulate(src[i] + shift, dst + shift, dst + shift, len);
+                    }
+                }, dst, src, cur_n * cur_k, n_iter * cur_k));
+            }
         }
-
         for (auto &one_future : futures) {
             one_future.get();
         }
