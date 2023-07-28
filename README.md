@@ -16,7 +16,7 @@ git clone https://github.com/siemonchan/thinkforce-fastllm.git
 cd thinkforce-fastllm
 mkdir build
 cd build
-cmake .. -DUSE_TFACC ON
+cmake .. -DUSE_TFACC=ON # 如果不使用TFCC, 那么使用 cmake .. -DUSE_TFACC=OFF
 make -j
 ```
 
@@ -35,7 +35,7 @@ make -j
 
 ## 推理速度
 
-ChatGLM-6B:
+ChatGLM-6B (token / s):
 |       平台|   batch 16|   batch 64|  batch 256|
 |----------:|----------:|----------:|----------:|
 |     TF7180|       31.5|       68.4|       84.3|
