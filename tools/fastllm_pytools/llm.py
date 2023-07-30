@@ -111,13 +111,23 @@ class model:
     def save(self, path : str):
         fastllm_lib.save_llm_model(self.model, path.encode());
 
+    def eval(self):
+        pass;
+
     def response(self,
                  query: str,
                  history: List[Tuple[str, str]] = None,
                  max_length: int = 8192, do_sample = True, top_p = 0.8, top_k = 1, temperature = 1.0, repeat_penalty = 1.0) -> str:
-        prompt = query if self.direct_query else self.get_prompt(query, history);
-        ret = fastllm_lib.response_str_llm_model(self.model, prompt.encode(),
-                                                 max_length, do_sample, top_p, top_k, temperature, repeat_penalty).decode();
+        ret = "";
+        for i in self.stream_response(query = query,
+                                      history = history,
+                                      max_length = max_length,
+                                      do_sample = do_sample,
+                                      top_p = top_p, top_k = top_k,
+                                      temperature = temperature,
+                                      repeat_penalty = repeat_penalty,
+                                      one_by_one = True):
+            ret += i;
         return ret;
 
     def stream_response(self,
