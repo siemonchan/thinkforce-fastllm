@@ -756,9 +756,6 @@ namespace fastllm {
 #else
 			retCb(-1, retString.c_str());
 #endif
-#ifdef USE_TFACC40T
-        tfacc40t::ReleaseAllDeviceMemory();
-#endif
         return retString;
     }
 
@@ -928,9 +925,6 @@ namespace fastllm {
             }
         }
 
-#ifdef USE_TFACC40T
-        tfacc40t::ReleaseAllDeviceMemory();
-#endif
         if (retCb)
             retCb(-1, outputs);
     }
@@ -947,6 +941,7 @@ namespace fastllm {
 		                                           Data(DataType::FLOAT32)));
 	    }
 	    Forward(inputIds, attentionMask, positionIds, pastKeyValues);
+        ClearProfiler();
 	    printf("finish.\n");
     }
 
@@ -954,12 +949,28 @@ namespace fastllm {
         if (round == 0 && GetVersion() == 1) {
             return input;
         } else {
+#if defined(_WIN32) or defined(_WIN64)
+            std::vector <uint8_t> vask = {233, 151, 174, 239, 188, 154, 0};
+            std::vector <uint8_t> vans = {231, 173, 148, 239, 188, 154, 0};
+            std::string sask = (char*)vask.data();
+            std::string sans = (char*)vans.data();
+            return (history + ("[Round " + std::to_string(round) + "]\n\n" + sask + input + "\n\n" + sans));
+#else
             return history + ("[Round " + std::to_string(round) + "]\n\n问：" + input + "\n\n答：");
+#endif
         }
     }
 
     std::string ChatGLMModel::MakeHistory(const std::string &history, int round, const std::string &input, const std::string &output) {
+#if defined(_WIN32) or defined(_WIN64)
+        std::vector <uint8_t> vask = {233, 151, 174, 239, 188, 154, 0};
+        std::vector <uint8_t> vans = {231, 173, 148, 239, 188, 154, 0};
+        std::string sask = (char*)vask.data();
+        std::string sans = (char*)vans.data();
+        return (history + ("[Round " + std::to_string(round) + "]\n\n" + sask + input + "\n\n" + sans + output + "\n"));
+#else
         return (history + ("[Round " + std::to_string(round) + "]\n\n问：" + input + "\n\n答：" + output + "\n\n"));
+#endif
     }
 
     int ChatGLMModel::LaunchResponseTokens(const std::vector<int> &inputTokens,
