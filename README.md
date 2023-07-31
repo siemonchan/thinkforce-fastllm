@@ -16,7 +16,7 @@ apt install gcc g++ cmake
 apt install numactl libnuma-dev
 ```
 
-1. 下载和编译
+2. 下载和编译
 
 ``` sh
 git clone https://github.com/siemonchan/thinkforce-fastllm.git
