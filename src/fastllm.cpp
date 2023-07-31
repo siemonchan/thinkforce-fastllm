@@ -495,6 +495,19 @@ namespace fastllm {
         printf("\n");
     }
 
+    string Data::ShapeString() const {
+        string shape;
+        shape += "[";
+        for (int i = 0; i < this->dims.size(); i++) {
+            shape += to_string(this->dims[i]);
+            if (i != this->dims.size() - 1) {
+                shape += ",";
+            }
+        }
+        shape += "]";
+        return shape;
+    }
+
     void Data::Print() const {
         printf("shape: ");
         for (int i : this->dims) {

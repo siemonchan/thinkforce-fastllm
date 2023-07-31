@@ -407,7 +407,7 @@ void FastllmTfaccLinearMultiCoreAuto(float *input, float *output, uint8_t *weigh
     auto t0 = chrono::system_clock::now();
 
     // collect all available tfacc cores
-    vector<int> all_tfacc = ConfigureTFACC(8 * TF_TFNN_GetChipNum(), TF_TFNN_GetChipNum());
+    std::vector<int> all_tfacc = ConfigureTFACC(fastllm::GetThreads(), TF_TFNN_GetChipNum());
 
     int per_n = 128;
     int n_round = (n - 1) / per_n + 1;
@@ -610,32 +610,32 @@ void FastllmTfaccLinearMultiCoreAuto(float *input, float *output, uint8_t *weigh
 
     // 3.add bias
     if (bias) {
-        // if (n == 1) {
-        //     FastllmTfaccAccumulate(bias, output, output, k);
-        // } else {
-        //     int per = max((int) (n / all_tfacc.size()), 1);
-        //     for (int n_iter = 0; n_iter < n;) {
-        //         int cur_n = min(per, n - n_iter);
+        if (n == 1) {
+            FastllmTfaccAccumulate(bias, output, output, k);
+        } else {
+            int per = max((int) (n / all_tfacc.size()), 1);
+            for (int n_iter = 0; n_iter < n;) {
+                int cur_n = min(per, n - n_iter);
 
-        //         float *bias_walk = bias;
-        //         float *output_walk = output + n_iter * k;
-        //         futures.push_back(pool->Submit([](float *dst, float *src, int round, int len) {
-        //             for (int i = 0; i < round; i++) {
-        //                 FastllmTfaccAccumulate(dst + i * len, src, dst + i * len, len);
-        //             }
-        //         }, output_walk, bias_walk, cur_n, k));
-        //         n_iter += cur_n;
-        //     }
-        //     for (auto &one_future : futures) {
-        //         one_future.get();
-        //     }
-        //     futures.clear();
-        // }
-        for (int o = 0; o < n; o++) {
-            float *bias_walk = bias;
-            float *output_walk = output + o * k;
-            FastllmTfaccAccumulate(output_walk, bias_walk, output_walk, k);
+                float *bias_walk = bias;
+                float *output_walk = output + n_iter * k;
+                futures.push_back(pool->Submit([](float *dst, float *src, int round, int len) {
+                    for (int i = 0; i < round; i++) {
+                        FastllmTfaccAccumulate(dst + i * len, src, dst + i * len, len);
+                    }
+                }, output_walk, bias_walk, cur_n, k));
+                n_iter += cur_n;
+            }
+            for (auto &one_future : futures) {
+                one_future.get();
+            }
+            futures.clear();
         }
+        // for (int o = 0; o < n; o++) {
+        //     float *bias_walk = bias;
+        //     float *output_walk = output + o * k;
+        //     FastllmTfaccAccumulate(output_walk, bias_walk, output_walk, k);
+        // }
     }
 
     // clear temp data

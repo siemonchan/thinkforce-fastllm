@@ -290,6 +290,8 @@ namespace fastllm {
 
         void PrintShape() const; // 输出形状
 
+        string ShapeString() const; // 返回形状string
+
         void Print() const; // 输出
 
         void CalcWeightSum(); // 计算WeightSum
