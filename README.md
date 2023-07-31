@@ -9,6 +9,13 @@ thinkfoce-fastllm是基于[fastllm](https://github.com/ztxz16/fastllm.git)开发
 ## 使用方法
 
 0. 登录到你的ThinkForce服务器(运行ChatGLM-6B起码需要双核心TF7140或单核心TF7180服务器)
+1. 安装相关依赖
+
+```sh
+apt install gcc g++ cmake
+apt install numactl libnuma-dev
+```
+
 1. 下载和编译
 
 ``` sh
@@ -20,14 +27,14 @@ cmake .. -DUSE_TFACC=ON # 如果不使用TFCC, 那么使用 cmake .. -DUSE_TFACC
 make -j
 ```
 
-2. 模型获取, 参考fastllm[模型获取](#模型获取), 若要使用TFACC, 需要导出int8格式模型
-3. 运行模型(以ChatGLM-6B为例)
+3. 模型获取, 参考fastllm[模型获取](#模型获取), 若要使用TFACC, 需要导出int8格式模型
+4. 运行模型(以ChatGLM-6B为例)
 
 ``` sh
 ./main -p chatglm-6b-int8.bin -t 16
 ```
 
-4. 运行web demo
+5. 运行web demo
 
 ``` sh
 ./webui -p chatglm-6b-int8.bin -t 16
