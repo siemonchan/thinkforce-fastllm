@@ -499,7 +499,7 @@ namespace fastllm {
         std::string shape;
         shape += "[";
         for (int i = 0; i < this->dims.size(); i++) {
-            shape += to_string(this->dims[i]);
+            shape += std::to_string(this->dims[i]);
             if (i != this->dims.size() - 1) {
                 shape += ",";
             }
