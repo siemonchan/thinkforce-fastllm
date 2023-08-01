@@ -1704,13 +1704,13 @@ namespace fastllm {
     }
 
     void FloatGeluNewPart(float *inputData, float *outputData, int len) {
+        int i = 0;
 #ifdef __aarch64__
         float32x4_t c0 = vdupq_n_f32(0.044715f);
         float32x4_t c1 = vdupq_n_f32(1.0f);
         float32x4_t c2 = vdupq_n_f32(0.7978845608028654f);
         float32x4_t c3 = vdupq_n_f32(0.5f);
 
-        int i = 0;
         for (; i + 3 < len; i += 4) {
             float32x4_t vx = vld1q_f32(inputData + i);
             float32x4_t v1 = vaddq_f32(c1, vmulq_f32(vmulq_f32(c0, vx), vx));
