@@ -40,6 +40,21 @@ make -j
 ./webui -p chatglm-6b-int8.bin -t 16
 ```
 
+## Python接口
+thinkforce-fastllm同样支持使用pythong接口调用TFACC，你可以在完成编译后
+
+```sh
+cd tools
+python setup.py install
+```
+
+然后通过python脚本调用大模型(以ChatGLM-6B为例)
+
+```sh
+cd -
+python3 tools/cli_demo.py -p chatglm-6b-int8.bin -t 16
+```
+
 ## 推理速度
 
 ChatGLM-6B (token / s):
@@ -53,6 +68,20 @@ ChatGLM2-6B (token / s):
 |----------:|----------:|----------:|----------:|
 |     TF7180|       40.9|       92.7|      111.1|
 | AMD 5975WX|       35.2|       37.0|       41.8|
+
+推理速度使用编译生成的benchmark程序得到，你可以通过如下方式查看它的用法
+
+```sh
+./benchmark -h
+TFNN Compiled at Jul 28 2023, 01:49:36
+Usage:
+[-h|--help]:                  显示帮助
+<-p|--path> <args>:           模型文件的路径
+<-t|--threads> <args>:        使用的线程数量
+<-l|--limit> <args>:          输出token数限制
+<-b|--batch> <args>:          batch数
+<-f|--file> <args>:           输入文件，文件中每行一个prompt，如果行数不足batch则用之前的prompt补充
+```
 
 ---
 # Original fastllm README:

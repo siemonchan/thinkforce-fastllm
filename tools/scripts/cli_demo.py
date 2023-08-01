@@ -4,11 +4,13 @@ from fastllm_pytools import llm
 def args_parser():
     parser = argparse.ArgumentParser(description = 'fastllm_chat_demo')
     parser.add_argument('-p', '--path', type = str, required = True, default = '', help = '模型文件的路径')
+    parser.add_argument('-t', '--thread', type = int, required = False, default = 4, help = '运行模型线程数')
     args = parser.parse_args()
     return args
 
 if __name__ == "__main__":
     args = args_parser()
+    llm.set_cpu_threads(args.thread)
     model = llm.model(args.path)
 
     history = []

@@ -4,6 +4,7 @@ struct RunConfig {
 	std::string path = "chatglm-6b-int4.bin"; // 模型文件路径
 	int threads = 4; // 使用的线程数
 	bool lowMemMode = false; // 是否使用低内存模式
+    int historySize = 1024; // 最大历史记录长度
 };
 
 void Usage() {
@@ -12,6 +13,7 @@ void Usage() {
 	std::cout << "<-p|--path> <args>:           模型文件的路径" << std::endl;
 	std::cout << "<-t|--threads> <args>:        使用的线程数量" << std::endl;
 	std::cout << "<-l|--low>:                   使用低内存模式" << std::endl;
+    std::cout << "<-s|--history><args>          最大历史记录长度" << std::endl;
     std::cout << "<--top_p> <args>:             采样参数top_p" << std::endl;
     std::cout << "<--top_k> <args>:             采样参数top_k" << std::endl;
     std::cout << "<--temperature> <args>:       采样参数温度，越高结果越不固定" << std::endl;
@@ -33,7 +35,9 @@ void ParseArgs(int argc, char **argv, RunConfig &config, fastllm::GenerationConf
 			config.threads = atoi(sargv[++i].c_str());
 		} else if (sargv[i] == "-l" || sargv[i] == "--low") {
 			config.lowMemMode = true;
-		} else if (sargv[i] == "-m" || sargv[i] == "--model") {
+		} else if (sargv[i] == "-s" || sargv[i] == "--history") {
+            config.historySize = atoi(sargv[++i].c_str());
+        } else if (sargv[i] == "-m" || sargv[i] == "--model") {
             i++;
         } else if (sargv[i] == "--top_p") {
             generationConfig.top_p = atof(sargv[++i].c_str());
@@ -76,6 +80,9 @@ int main(int argc, char **argv) {
         }
         if (input == "stop") {
             break;
+        }
+        if (history.size() > config.historySize) {
+            history = history.substr(history.size() - config.historySize, config.historySize);
         }
         std::string ret = model->Response(model->MakeInput(history, round, input), [](int index, const char* content) {
             if (index == 0) {
