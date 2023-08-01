@@ -41,11 +41,11 @@ make -j
 ```
 
 ## Python接口
-thinkforce-fastllm同样支持使用pythong接口调用TFACC，你可以在完成编译后
+thinkforce-fastllm同样支持使用python接口调用TFACC，你可以在完成编译后
 
 ```sh
 cd tools
-python setup.py install
+python3 setup.py install
 ```
 
 然后通过python脚本调用大模型(以ChatGLM-6B为例)
