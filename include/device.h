@@ -22,6 +22,9 @@ namespace fastllm {
 
         // 对某一个算子进行推理
         virtual void Run(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams) = 0;
+
+        // 获取某一个算子的计算量
+        virtual long long int Ops(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams);
     };
 
     class BaseBatchOperator : BaseOperator {
@@ -51,6 +54,9 @@ namespace fastllm {
 
         // 对某一个算子进行推理
         virtual void Run(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams);
+
+        // 获取某一个算子的计算量
+        virtual long long int Ops(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams);
 
         // 打印device下每个算子的运行细节
         void Profile(bool silent = false);

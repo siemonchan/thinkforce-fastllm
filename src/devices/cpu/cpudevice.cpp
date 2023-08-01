@@ -1172,6 +1172,19 @@ namespace fastllm {
 // printf("n = %d, m = %d, k = %d, spend %f s, gops = %f\n", n, m, k, spend, gops);
     }
 
+    long long int CpuLinearOp::Ops(const std::string &opType, const fastllm::DataDict &datas,
+                                   const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+        Data &weight = *(datas.find("weight")->second);
+
+        int m = input.dims.back();
+        int k = output.dims.back();
+        int n = input.Count(0) / m;
+
+        return (long long int) n * m * k;
+    }
+
     void CpuSplitOp::Reshape(const std::string &opType, const fastllm::DataDict &datas,
                              const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
         Data &input = *(datas.find("input")->second);
@@ -1494,6 +1507,19 @@ namespace fastllm {
         }
     }
 
+    long long int CpuMatMulOp::Ops(const std::string &opType, const DataDict &datas, 
+                                   const FloatDict &floatParams, const IntDict &intParams) {
+        Data &input0 = *(datas.find("input0")->second);
+        Data &input1 = *(datas.find("input1")->second);
+        Data &output = *(datas.find("output")->second);
+        int batch = input0.dims[0];
+        int n = input0.dims[input0.dims.size() - 2];
+        int m = input0.dims.back();
+        int k = input1.dims[input1.dims.size() - 1];
+
+        return (long long int) batch * n * m * k;
+    }
+
     void CpuMatMulTransBOp::Reshape(const std::string &opType, const fastllm::DataDict &datas,
                                     const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
         Data &input0 = *(datas.find("input0")->second);
@@ -1565,6 +1591,19 @@ namespace fastllm {
         for (int i = 0; i < futures.size(); i++) {
             futures[i].get();
         }
+    }
+
+    long long int CpuMatMulTransBOp::Ops(const std::string &opType, const fastllm::DataDict &datas,
+                                         const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
+        Data &input0 = *(datas.find("input0")->second);
+        Data &input1 = *(datas.find("input1")->second);
+        Data &output = *(datas.find("output")->second);
+        int batch = input0.dims[0];
+        int n = input0.dims[input0.dims.size() - 2];
+        int m = input0.dims.back();
+        int k = input1.dims[input1.dims.size() - 2];
+
+        return (long long int) batch * n * m * k;
     }
 
     void CpuSoftMaxOp::Run(const std::string &opType, const fastllm::DataDict &datas,

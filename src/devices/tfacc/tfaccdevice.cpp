@@ -158,6 +158,18 @@ namespace fastllm {
         }
     }
 
+    long long int TfaccLinearOp::Ops(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+        Data &weight = *(datas.find("weight")->second);
+
+        int n = input.Count(0) / input.dims.back();
+        int m = input.dims.back();
+        int k = output.dims.back();
+
+        return (long long int) n * m * k;
+    }
+
     bool TfaccMatMulOp::CanRun(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams) {
         Data &input0 = *(datas.find("input0")->second);
         Data &input1 = *(datas.find("input1")->second);

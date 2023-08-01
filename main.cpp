@@ -82,7 +82,7 @@ int main(int argc, char **argv) {
             break;
         }
         if (history.size() > config.historySize) {
-            history = history.substr(history.size() - config.historySize, config.historySize);
+            history = history.substr(history.size() - config.historySize);
         }
         std::string ret = model->Response(model->MakeInput(history, round, input), [](int index, const char* content) {
             if (index == 0) {

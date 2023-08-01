@@ -25,6 +25,7 @@ else()
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread --std=c++17 -O2 -march=native")
 endif()
 
+# add_compile_definitions(DEBUG) # uncomment this to record profile when inferencing
 
 message(STATUS "CMAKE_CXX_FLAGS" ${CMAKE_CXX_FLAGS})
 set(FASTLLM_CXX_SOURCES src/fastllm.cpp src/device.cpp src/model.cpp src/executor.cpp

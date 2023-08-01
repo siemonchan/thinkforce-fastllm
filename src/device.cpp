@@ -45,14 +45,12 @@ namespace fastllm {
 
     void BaseDevice::Run(const std::string &opType, const fastllm::DataDict &datas,
                          const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
-#ifdef DEBUG
-        auto st = chrono::system_clock::now();
-#endif
         this->ops[opType]->Run(opType, datas, floatParams, intParams);
-#ifdef DEBUG
-        auto end = chrono::system_clock::now();
-        this->ops[opType]->profile.Write(GetSpan(st, end), this->ops[opType]->Ops(opType, datas, floatParams, intParams));
-#endif
+    }
+
+    long long int BaseDevice::Ops(const std::string &opType, const fastllm::DataDict &datas,
+                                  const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
+        return this->ops[opType]->Ops(opType, datas, floatParams, intParams);
     }
 
     bool BaseOperator::CanRun(const std::string &opType, const DataDict &datas, const FloatDict &floatParams,
@@ -73,6 +71,10 @@ namespace fastllm {
         }
         outputs[0].dataType = inputs[0].dataType;
         outputs[0].Resize(inputs[0].dims);
+    }
+
+    long long int BaseOperator::Ops(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams) {
+        return 0;
     }
 
     void BaseBatchOperator::Reshape(const std::string &opType, const fastllm::DataDict &datas,

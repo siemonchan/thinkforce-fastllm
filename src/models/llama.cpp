@@ -722,8 +722,10 @@ namespace fastllm {
         LastTokensManager tokensManager (batch, generationConfig.last_n);
         while (true) {
             auto st = std::chrono::system_clock::now();
+            // ClearProfiler();
             std::vector <int> ret = ForwardBatch(batch, inputIds, attentionMask, positionIds, pastKeyValues,
                                                  generationConfig, tokensManager);
+            // PrintProfiler();
             for (int i = 0; i < batch; i++) {
                 tokensManager.units[i].Push(ret[i]);
             }

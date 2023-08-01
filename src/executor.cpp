@@ -104,11 +104,15 @@ namespace fastllm {
                 }
                 device->Reshape(opType, datas, floatParams, intParams);
                 device->Run(opType, datas, floatParams, intParams);
+#ifdef DEBUG
+                long long int ops = device->Ops(opType, datas, floatParams, intParams);
+                float spend = GetSpan(st, std::chrono::system_clock::now());
+                profiler[opType][device->deviceType].first += spend;
+                profiler[opType][device->deviceType].second += ops;
+#endif
                 break;
             }
         }
-        float spend = GetSpan(st, std::chrono::system_clock::now());
-        profiler[opType] += spend;
     }
 
     void Executor::ClearProfiler() {
@@ -116,11 +120,28 @@ namespace fastllm {
     }
 
     void Executor::PrintProfiler() {
-        float sum = 0.0;
-        for (auto &it : profiler) {
-            printf("%s spend %f\n", it.first.c_str(), it.second);
-            sum += it.second;
+        if (profiler.empty()) {
+            return;
         }
-        printf("total spend %f\n", sum);
+        float sum = 0.0;
+        printf("%-23s%6s%10s%10s\n", "opType", "device", "time(s)", "Gops");
+        printf("-------------------------------------------------\n");
+        for (auto &op : profiler) {
+            for (auto &dev : op.second) {
+                const char *op_type = op.first.c_str();
+                const char *device_type = dev.first.c_str();
+                float time = dev.second.first;
+                double gops = (double) dev.second.second / (dev.second.first * 1024 * 1024 * 1024);
+
+                if (gops == 0) {
+                    printf("%-24s%5s%10.2f%10s\n", op_type, device_type, time, "-");
+                } else {
+                    printf("%-24s%5s%10.2f%10.2f\n", op_type, device_type, time, gops);
+                }
+                
+                sum += time;
+            }
+        }
+        printf("total spend %.2fs\n", sum);
     }
 }
