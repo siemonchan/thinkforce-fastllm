@@ -54,14 +54,19 @@ if (USE_TFACC)
     add_definitions(-DUSE_TFDL)
     add_definitions(-DUSE_TFACC40T)
 
+    execute_process(
+        COMMAND "./insmodTFDriver.sh"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/third_party/thinkforce"
+    )
+
     set(FASTLLM_TFACC_SOURCES src/devices/tfacc/tfaccdevice.cpp src/devices/tfacc/fastllm-tfacc.cpp)
 
-    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/tfdl/include)
-    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/tfdl/tfacc40t)
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/thinkforce/include/tfdl)
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/thinkforce/include/tfacc40t)
 
-    set(lib_tfacc ${CMAKE_CURRENT_SOURCE_DIR}/third_party/tfdl/build/src/lib_tfdl.so
-                  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/tfdl/tfacc40t/libtfnn.so
-                  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/tfdl/tfacc40t/libtfacc40t.so)
+    set(lib_tfacc ${CMAKE_CURRENT_SOURCE_DIR}/third_party/thinkforce/lib/lib_tfdl.so
+                  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/thinkforce/lib/libtfnn.so
+                  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/thinkforce/lib/libtfacc40t.so)
     set(FASTLLM_LINKED_LIBS ${FASTLLM_LINKED_LIBS} ${lib_tfacc} numa)
 endif()
 
@@ -70,7 +75,7 @@ if (PY_API)
     add_subdirectory(${PYBIND})
     add_compile_definitions(PY_API)
     
-    set(Python3_ROOT_DIR "/usr/local/python3.10.6/bin/")
+    set(Python3_ROOT_DIR "/usr/bin/")
     find_package(Python3 REQUIRED)
 
     include_directories(third_party/pybind11/include)

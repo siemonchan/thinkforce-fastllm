@@ -1,0 +1,4 @@
+
+config TF_ENCODER
+       tristate "Think-force Video Encoder Support."
+       default y

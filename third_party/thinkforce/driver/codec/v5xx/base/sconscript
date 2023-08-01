@@ -1,0 +1,40 @@
+# -----------------------------------------------------------------------------
+#  This confidential and proprietary software may be used only as authorized
+#  by a licensing agreement from ARM Limited.
+#          (C) COPYRIGHT 2010-2018 ARM Limited, ALL RIGHTS RESERVED
+#  The entire notice above must be reproduced on all authorized copies and
+#  copies may only be made to the extent permitted by a licensing agreement
+#  from ARM Limited.
+# -----------------------------------------------------------------------------
+
+import os
+
+Import('driver_env')
+myEnv = driver_env.Clone()
+
+if(myEnv['watchdog'] == '0'):
+    myEnv.Append(CPPDEFINES=['DISABLE_WATCHDOG=1'])
+
+if((myEnv['arch'] == 'x86_32') or (myEnv['arch'] == 'x86_64')):
+    myEnv.Append(CPPPATH=[myEnv['libs_install'],
+                          '#/kernel/drivers/video/arm/v5xx/base',
+                          '#/kernel/drivers/video/arm/v5xx/resource',
+                          '#/kernel/drivers/video/arm/v5xx/external',
+                          '#/fw/include',
+                          '#/util/src'])
+
+    if(myEnv['unit'] == '0'):
+        myEnv.Append(CPPDEFINES=['SCHEDULER_MODE_IDLE_SWITCHOUT=1'])
+    else:
+        myEnv.Append(CPPDEFINES=['SCHEDULER_MODE_IDLE_SWITCHOUT=0'])
+
+    sources = ['mve_command.c', 'mve_session.c', 'mve_session_buffer.c', 'mve_mmu.c', 'mve_mem_region.c', 'mve_fw.c',
+               'mve_queue.c', 'mve_buffer_common.c', 'mve_com.c', 'mve_com_host_interface_v2.c',
+               'mve_com_host_interface_v3.c', 'mve_buffer_valloc.c', 'mve_buffer_attachment.c',
+               os.path.join(myEnv['BUILD_DIR_PATH'], 'emul/emulator_wrapper.o'),
+               os.path.join(myEnv['BUILD_DIR_PATH'], 'emul/emulator_userspace.o'),
+               os.path.join(myEnv['BUILD_DIR_PATH'], 'emul/emulator_mem.o'),
+               os.path.join(myEnv['BUILD_DIR_PATH'], 'emul/emulator_utils.o')]
+
+    sMVEDriverLib = myEnv.StaticLibrary(os.path.join("$STATIC_LIB_PATH", "mve_base"), sources)
+    myEnv.LibTarget("mve_base", sMVEDriverLib)

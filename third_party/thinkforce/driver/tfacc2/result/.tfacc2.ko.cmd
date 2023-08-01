@@ -1,0 +1,1 @@
+cmd_/home/siemon/tfdl/Dist/NPU40T/driver/tfacc2/result/tfacc2.ko := ld -r  -EL  -maarch64elf -z noexecstack   --build-id  -T ./scripts/module-common.lds -T ./arch/arm64/kernel/module.lds -o /home/siemon/tfdl/Dist/NPU40T/driver/tfacc2/result/tfacc2.ko /home/siemon/tfdl/Dist/NPU40T/driver/tfacc2/result/tfacc2.o /home/siemon/tfdl/Dist/NPU40T/driver/tfacc2/result/tfacc2.mod.o;  true

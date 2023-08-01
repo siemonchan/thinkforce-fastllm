@@ -1,0 +1,54 @@
+config MALI_VPU3_DEBUG
+	depends on MALI_VPU3
+	bool "Mali VPU driver debug"
+	default n
+	help
+		This enabled debug output for the Mali VPU driver
+
+config CONFIG_MALI_VPU3_ENABLE_ALOG
+	depends on MALI_VPU3
+	bool "Send kernel space logs to Android logd socket."
+	default n
+	help
+		Send kernel space logs to Android logd socket. This option should only be enabled for Android Lollipop or later revisions.
+
+config CONFIG_MALI_VPU3_ENABLE_FTRACE
+	depends on MALI_VPU3
+	bool "Send kernel space logs to ftrace."
+	default n
+	help
+		Send kernel space logs to ftrace.
+
+config CONFIG_MALI_VPU3_ENABLE_PRINT_FILE
+	depends on MALI_VPU3
+	bool "Append file and line number to kernel space log messages."
+	default n
+	help
+		Append file and line number to kernel space log messages.
+
+choice
+	depends on MALI_VPU3
+	prompt "Choose power saving mode"
+config MALI_VPU3_POWER_SAVING_MODE_DVFS
+	bool "Use DVFS"
+config MALI_VPU3_POWER_SAVING_MODE_CLOCK_GATING
+	bool "Use HW clock gating"
+endchoice
+
+choice
+	depends on MALI_VPU3
+	prompt "Choose hardware platform"
+config MALI_VPU3_VEX6
+	bool "Versatile Express 6"
+config MALI_VPU3_VEX7
+	bool "Versatile Express 7"
+config MALI_VPU3_JUNO
+	bool "Juno"
+endchoice
+
+config MALI_VPU3_DISABLE_WATCHDOG
+	depends on MALI_VPU3
+	bool "Disable the watchdog"
+	default n
+	help
+		Disable the watchdog that detects frozen video sessions.

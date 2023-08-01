@@ -1,0 +1,103 @@
+# -----------------------------------------------------------------------------
+#  This confidential and proprietary software may be used only as authorized
+#  by a licensing agreement from ARM Limited.
+#          (C) COPYRIGHT 2010-2018 ARM Limited, ALL RIGHTS RESERVED
+#  The entire notice above must be reproduced on all authorized copies and
+#  copies may only be made to the extent permitted by a licensing agreement
+#  from ARM Limited.
+# -----------------------------------------------------------------------------
+
+import os
+import subprocess
+
+Import('target_env')
+driver_env = target_env.Clone()
+Export('driver_env')
+
+if GetOption("clean"):
+    subprocess.call(['make clean'], shell=True)
+
+# need to invert the watchdog
+if driver_env['watchdog'] == '1':
+    driver_env['disable_watchdog'] = '0'
+else:
+    driver_env['disable_watchdog'] = '1'
+
+prints = ""
+if(driver_env['log_ftrace'] == '1'):
+    prints += "CONFIG_MALI_VPU_ENABLE_FTRACE=y "
+if(driver_env['log_print_file'] == '1'):
+    prints += "CONFIG_MALI_VPU_ENABLE_PRINT_FILE=y "
+
+driver_env.BuildRecursive()
+
+if os.path.isfile(os.path.normpath(os.environ['PWD']) + '/kernel/drivers/video/arm/v5xx/base/Makefile'):
+    if((driver_env['arch'] == 'arm_v7' or driver_env['arch'] == 'arm_v8') and os.environ.get('KDIR', '') != ''):
+        platform = ""
+        if (driver_env['hw'] == 'vex6'):
+            platform = "CONFIG_MALI_VPU_VEX6=y"
+        elif (driver_env['hw'] == 'vex7'):
+            platform = "CONFIG_MALI_VPU_VEX7=y"
+        elif (driver_env['hw'] == 'juno'):
+            platform = "CONFIG_MALI_VPU_JUNO=y"
+        else:
+            print "Unsupported platform"
+
+        if (driver_env['arch'] == 'arm_v7'):
+            arch = 'arm'
+        elif (driver_env['arch'] == 'arm_v8'):
+            arch = 'arm64'
+
+        watchdog = ""
+        if (driver_env['disable_watchdog'] == '1'):
+            watchdog = "CONFIG_MALI_VPU_DISABLE_WATCHDOG=y"
+
+        dvfs_sim = ""
+        if (driver_env['dvfs_sim'] == '1' and driver_env['power_saving_mode'] != 'clock_gating'):
+            dvfs_sim = "CONFIG_MALI_VPU_ENABLE_DVFS_SIM=y"
+
+        debug = ""
+        if (driver_env['debug'] == '1'):
+            debug = "CONFIG_MALI_VPU_DEBUG=y"
+
+        unit = ""
+        if (driver_env['unit'] == '1'):
+            unit = "CONFIG_MALI_VPU_UNIT=y"
+
+        trackmem = ""
+        if (driver_env['trackmem'] == '1' or driver_env['trackmem'] == '2'):
+            trackmem = "CONFIG_MALI_VPU_TRACKMEM=y"
+
+        resfail_mem = ""
+        if (driver_env['resfail_mem'] == '1'):
+            resfail_mem = "CONFIG_MALI_VPU_RESFAIL=y"
+
+        power_saving_mode = ""
+        if (driver_env['power_saving_mode'] == 'clock_gating'):
+            power_saving_mode = "CONFIG_MALI_VPU_POWER_SAVING_MODE_CLOCK_GATING=y"
+
+        if driver_env.isAndroid():
+            prints += "CONFIG_MALI_VPU_ENABLE_ALOG=y "
+
+        source_dir = driver_env['BUILD_DIR_PATH'] + '/kernel/drivers/video/arm/v5xx'
+
+        cmd = driver_env.Command('kernel', [],
+                          'mkdir -p ' + driver_env['BUILD_DIR_PATH']  + '; ' +
+                          'cp -asRf ' + os.path.normpath(os.environ['PWD']) + '/kernel' +  ' ' + driver_env['BUILD_DIR_PATH'] + '; ' +
+                          'cd ' + source_dir + '; ' +
+                          'CROSS_COMPILE=' + driver_env['tool_prefix'] +
+                          ' ARCH=' + arch +
+                          ' ' + debug +
+                          ' ' + platform +
+                          ' ' + prints +
+                          ' ' + watchdog +
+                          ' ' + dvfs_sim +
+                          ' ' + unit +
+                          ' ' + power_saving_mode +
+                          ' ' + trackmem +
+                          ' ' + resfail_mem +
+                          ' CONFIG_MALI_VPU=m' +
+                          ' make -C ' + os.path.normpath(os.environ['KDIR']) +' M=' + source_dir + '; ' +
+                          'cp ' + source_dir + '/base/mve_base.ko ' + driver_env['progs_install'] + '; ' +
+                          'cp ' + source_dir + '/resource/mve_rsrc.ko ' + driver_env['progs_install'])
+        driver_env.AlwaysBuild(cmd)

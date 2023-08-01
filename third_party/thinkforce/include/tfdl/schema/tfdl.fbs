@@ -1,0 +1,64 @@
+// flatbuffer schema for TFDL`s weight, quantization configs and other information storage
+
+namespace tfdl_fb;
+
+enum DataType : byte {
+    FLOAT32 = 0,
+    FLOAT16 = 1,
+    BFLOAT16 = 2,
+    INT64 = 3,
+    INT32 = 4,
+    INT16 = 5,
+    INT8 = 6,
+    UINT32 = 7,
+    UINT16 = 8,
+    UINT8 = 9,
+    NONUNIFORM = 10,
+    STRING = 11,
+    BOOLEAN = 12
+}
+
+table NonuniformTable {
+    name:string(key);
+    table:[ushort];
+}
+
+table DataTypeTable {
+    name:string(key);
+    type:DataType;
+}
+
+table Weight {
+    name:string;
+    weight_id:int;
+    type:DataType;
+    pointer:[ubyte];
+}
+
+table QuantizationConfig {
+    min:[float];
+    max:[float];
+    scale:[float];
+    zero_point:[int];
+    quantize_bit:int=8;
+}
+
+table DataQuantizationConfig {
+    name:string(key);
+    profile:QuantizationConfig;
+}
+
+table WeightQuantizationConfig {
+    name:string(key);
+    profile:[QuantizationConfig];
+}
+
+table BinaryFile {
+    weight:[Weight];
+    data_quantization_config:[DataQuantizationConfig];
+    weight_quantization_config:[WeightQuantizationConfig];
+    nonuniform_table:[NonuniformTable];
+    data_type_table:[DataTypeTable];
+}
+
+root_type BinaryFile;
