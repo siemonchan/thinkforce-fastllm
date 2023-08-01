@@ -109,11 +109,6 @@ add_custom_command(
 add_executable(benchmark example/benchmark/benchmark.cpp)
 target_link_libraries(benchmark fastllm)
 
-if (USE_TFACC)
-    add_executable(tfacc_linear_test test/tfacc_linear_test.cpp)
-    target_link_libraries(tfacc_linear_test fastllm)
-endif()
-
 add_library(fastllm_tools SHARED ${FASTLLM_CXX_SOURCES} ${FASTLLM_CUDA_SOURCES} ${FASTLLM_TFACC_SOURCES} tools/src/pytools.cpp)
 target_link_libraries(fastllm_tools PUBLIC ${FASTLLM_LINKED_LIBS})
 
