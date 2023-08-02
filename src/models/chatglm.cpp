@@ -23,7 +23,7 @@
 #endif
 
 #ifdef USE_TFACC40T
-#include <Operations.h>        
+#include "fastllm-tfacc.h"     
 #endif
 
 namespace fastllm {
@@ -941,6 +941,9 @@ namespace fastllm {
 		                                           Data(DataType::FLOAT32)));
 	    }
 	    Forward(inputIds, attentionMask, positionIds, pastKeyValues);
+#ifdef USE_TFACC40T
+        FastllmTfaccReleaseTempMemory();
+#endif
         ClearProfiler();
 	    printf("finish.\n");
     }

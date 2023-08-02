@@ -18,10 +18,16 @@ void FastllmTfaccCopyStride(pointerType *dst, pointerType *src, int len, int rou
 void FastllmTfaccQuantization(uint8_t *dst, float *src, int len, int round, int dst_stride, int src_stride, 
                               tfdl::PerChannelConfig config);
 
+void FastllmTfaccInitBlasop();
+
+void FastllmTfaccClearBlasop();
+
+void FastllmTfaccClearMemory();
+
+void FastllmTfaccReleaseTempMemory();
+
 void FastllmTfaccLinearMultiCoreFloat(float *input, float *output, float *weight, float *bias, int n, int m, int k, 
                                       fastllm::ThreadPool *pool);
 
 void FastllmTfaccLinearMultiCoreInt8(float *input, float *output, uint8_t *weight, float *bias, int n, int m, int k,
                                      tfdl::PerChannelConfig tfWeightConfig, fastllm::ThreadPool *pool);
-
-void FastllmTfaccClearMemory();

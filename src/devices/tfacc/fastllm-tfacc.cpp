@@ -101,6 +101,42 @@ void FastllmTfaccQuantization(uint8_t *dst, float *src, int len, int round, int 
     }
 }
 
+void FastllmTfaccInitBlasop() {
+    if (FastllmTfaccBlasopCache.empty()) {
+        int maxCmdNum = 60000;
+        int total_cores = 8 * TF_TFNN_GetChipNum();
+        for (int i = 0; i < total_cores; i++) {
+            FastllmTfaccBlasopCache.push_back(new tfacc40t::BlasopList(TF_TFNN_GetChipId(i), maxCmdNum));
+        }
+    }
+}
+
+void FastllmTfaccClearBlasop() {
+    for (auto blasopList : FastllmTfaccBlasopCache) {
+        delete blasopList;
+    }
+    FastllmTfaccBlasopCache.clear();
+}
+
+void FastllmTfaccClearMemory() {
+    for (auto weightMapPair : FastllmTfaccWeightMap) {
+        for (auto weight : weightMapPair.second) {
+            delete weight;
+        }
+    }
+    FastllmTfaccWeightMap.clear();
+}
+
+void FastllmTfaccReleaseTempMemory() {
+    for (auto &weightRealSpace : FastllmTfaccWeightRealSpace) {
+        for (auto data : weightRealSpace.second) {
+            delete[] (char *) data;
+        }
+        weightRealSpace.second.clear();
+    }
+    FastllmTfaccWeightRealSpace.clear();
+}
+
 void FastllmTfaccLinearMultiCoreFloat(float *input, float *output, float *weight, float *bias, int n, int m, int k, 
                                       fastllm::ThreadPool *pool) {
     auto t0 = chrono::system_clock::now();
@@ -124,19 +160,7 @@ void FastllmTfaccLinearMultiCoreFloat(float *input, float *output, float *weight
     ConfigureKMRound(k, m, all_tfacc.size(), &per_k, &per_m, &k_round, &m_round);
 
     // create space for blasop
-    if (FastllmTfaccBlasopCache.empty()) {
-        int maxCmdNum = 60000;
-        int total_cores = 8 * TF_TFNN_GetChipNum();
-        for (int i = 0; i < total_cores; i++) {
-            FastllmTfaccBlasopCache.push_back(new tfacc40t::BlasopList(TF_TFNN_GetChipId(i), maxCmdNum));
-        }
-
-        printf("tfaccs: ");
-        for (auto tfacc : all_tfacc) {
-            printf("%d ", tfacc);
-        }
-        printf("\n");
-    }
+    FastllmTfaccInitBlasop();
 
     // prepare weight
     long long int weight_key = (long long int) weight;
@@ -168,15 +192,16 @@ void FastllmTfaccLinearMultiCoreFloat(float *input, float *output, float *weight
         for (auto &one_future : futures) {
             one_future.get();
         }
-    } else {
-        // clear useless memory when using each weight for second time
-        if (!FastllmTfaccWeightRealSpace[weight_key].empty()) {
-            for (int i = 0; i < FastllmTfaccWeightRealSpace[weight_key].size(); i++) {
-                delete[] (float *) FastllmTfaccWeightRealSpace[weight_key][i];
-            }
-            FastllmTfaccWeightRealSpace[weight_key].clear();
-        }
-    }
+    } 
+    // else {
+    //     // clear useless memory when using each weight for second time
+    //     if (!FastllmTfaccWeightRealSpace[weight_key].empty()) {
+    //         for (int i = 0; i < FastllmTfaccWeightRealSpace[weight_key].size(); i++) {
+    //             delete[] (float *) FastllmTfaccWeightRealSpace[weight_key][i];
+    //         }
+    //         FastllmTfaccWeightRealSpace[weight_key].clear();
+    //     }
+    // }
 
     // quantize input data
     vector<tfdl::TFDataInt8 *> temp_input;
@@ -410,15 +435,16 @@ void FastllmTfaccLinearMultiCoreInt8(float *input, float *output, uint8_t *weigh
         for (auto &one_future : futures) {
             one_future.get();
         }
-    } else {
-        // clear useless memory when using each weight for second time
-        if (!FastllmTfaccWeightRealSpace[weight_key].empty()) {
-            for (int i = 0; i < FastllmTfaccWeightRealSpace[weight_key].size(); i++) {
-                delete[] (uint8_t *) FastllmTfaccWeightRealSpace[weight_key][i];
-            }
-            FastllmTfaccWeightRealSpace[weight_key].clear();
-        }
-    }
+    } 
+    // else {
+    //     // clear useless memory when using each weight for second time
+    //     if (!FastllmTfaccWeightRealSpace[weight_key].empty()) {
+    //         for (int i = 0; i < FastllmTfaccWeightRealSpace[weight_key].size(); i++) {
+    //             delete[] (uint8_t *) FastllmTfaccWeightRealSpace[weight_key][i];
+    //         }
+    //         FastllmTfaccWeightRealSpace[weight_key].clear();
+    //     }
+    // }
 
     // quantize input data
     vector<tfdl::TFDataInt8 *> temp_input;
@@ -559,11 +585,6 @@ void FastllmTfaccLinearMultiCoreInt8(float *input, float *output, uint8_t *weigh
             }
             futures.clear();
         }
-        // for (int o = 0; o < n; o++) {
-        //     float *bias_walk = bias;
-        //     float *output_walk = output + o * k;
-        //     FastllmTfaccAccumulate(output_walk, bias_walk, output_walk, k);
-        // }
     }
 
     // clear temp data
@@ -587,18 +608,4 @@ void FastllmTfaccLinearMultiCoreInt8(float *input, float *output, uint8_t *weigh
     // printf("multicore linear: Cores: %d, Gops: %.2f, time: prepare: %.2fms; run blasop: %.2fms, postprocess: %.2fms\n", 
     //        (int) min(m_round * k_round, (int) all_tfacc.size()), ((float) m * k * n / 1000 / 1000 / 1000) / GetSpan(t0, t3),
     //        GetSpan(t0, t1) * 1000, GetSpan(t1, t2) * 1000, GetSpan(t2, t3) * 1000);
-}
-
-void FastllmTfaccClearMemory() {
-    for (auto blasopList : FastllmTfaccBlasopCache) {
-        delete blasopList;
-    }
-    FastllmTfaccBlasopCache.clear();
-
-    for (auto weightMapPair : FastllmTfaccWeightMap) {
-        for (auto weight : weightMapPair.second) {
-            delete weight;
-        }
-    }
-    FastllmTfaccWeightMap.clear();
 }

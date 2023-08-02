@@ -14,6 +14,10 @@
 #include "fastllm-cuda.cuh"
 #endif
 
+#ifdef USE_TFACC40T
+#include "fastllm-tfacc.h"
+#endif
+
 namespace fastllm {
     std::vector <float> GetInterLeavePowerOf2(int n) {
         float start = powf(2, -powf(2, -(log2f(n) - 3)));
@@ -804,6 +808,9 @@ namespace fastllm {
                                                    Data(DataType::FLOAT32)));
         }
         Forward(inputIds, attentionMask, positionIds, pastKeyValues);
+#ifdef USE_TFACC40T
+        FastllmTfaccReleaseTempMemory();
+#endif
         printf("finish.\n");
     }
 
