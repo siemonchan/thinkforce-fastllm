@@ -27,12 +27,11 @@
 #endif
 
 namespace fastllm {
-    ChatGLMModel::ChatGLMModel() {
-        this->model_type = "chatglm";
-
-        this->bos_token_id = 130004;
-        this->eos_token_id = 130005;
-
+    void ChatGLMModel::UpdateSinCos(float rope) {
+        if (rope == this->rope) {
+            return;
+        }
+        this->rope = rope;
         sin.resize(max_positions);
         cos.resize(max_positions);
         std::vector <float> invFreq;
@@ -43,8 +42,8 @@ namespace fastllm {
             sin[i].resize(rotary_dim);
             cos[i].resize(rotary_dim);
             for (int j = 0; j < invFreq.size(); j++) {
-                sin[i][j] = ::sin((float)i * invFreq[j]);
-                cos[i][j] = ::cos((float)i * invFreq[j]);
+                sin[i][j] = ::sin((float)i / rope * invFreq[j]);
+                cos[i][j] = ::cos((float)i / rope * invFreq[j]);
             }
         }
 
@@ -57,11 +56,18 @@ namespace fastllm {
         }
         sinData.CopyFrom(Data(DataType::FLOAT32, {(int)this->sin.size(), (int)this->sin[0].size()}, fsin));
         cosData.CopyFrom(Data(DataType::FLOAT32, {(int)this->cos.size(), (int)this->cos[0].size()}, fcos));
-        if (GetVersion() == 1) {
-            weight.embeddingNames.insert("transformer.word_embeddings.weight");
-        } else if (GetVersion() == 2) {
-            weight.embeddingNames.insert("transformer.embedding.word_embeddings.weight");
-        }
+    }
+
+    ChatGLMModel::ChatGLMModel() {
+        this->model_type = "chatglm";
+
+        this->bos_token_id = 130004;
+        this->eos_token_id = 130005;
+
+        this->rope = -1.0;
+        this->UpdateSinCos(1.0f);
+        weight.embeddingNames.insert("transformer.word_embeddings.weight");
+        weight.embeddingNames.insert("transformer.embedding.word_embeddings.weight");
     }
 
     int ChatGLMModel::Forward(const fastllm::Data &inputIds, const fastllm::Data &attentionMask,
@@ -78,6 +84,9 @@ namespace fastllm {
             std::vector <std::pair <Data, Data> > &pastKeyValues,
             const GenerationConfig &generationConfig,
             const LastTokensManager &lastTokens) {
+        if (this->weight.dicts.find("rope_ratio") != this->weight.dicts.end()) {
+            UpdateSinCos(atof(this->weight.dicts["rope_ratio"].c_str()));
+        }
         int maxLen = inputIds.dims[1];
         Data inputEmbeddings;
         Data attenInput;
@@ -278,13 +287,12 @@ namespace fastllm {
                 int base = (maxLen - 1) * batch + b;
                 lastRet.push_back((int) (((float *) topk.cpuData)[base * 2] + 1e-3));
             }
-        } else {
+        } else if (!lastTokens.units.empty()) {
             for (int b = 0; b < batch; b++) {
                 int base = (maxLen - 1) * batch + b;
                 lastRet.push_back(LLMSampling(logits, base, generationConfig, lastTokens.units[b]));
             }
         }
-
         return lastRet;
     }
 
@@ -297,6 +305,9 @@ namespace fastllm {
             std::vector <std::pair <Data*, Data*> > &pastKeyValues,
             const std::vector <GenerationConfig> &generationConfigs,
             const LastTokensManager &lastTokens) {
+        if (this->weight.dicts.find("rope_ratio") != this->weight.dicts.end()) {
+            UpdateSinCos(atof(this->weight.dicts["rope_ratio"].c_str()));
+        }
         int seqLen = inputIds.dims[1];
         sinData.ToDevice(DataDevice::CUDA);
         cosData.ToDevice(DataDevice::CUDA);

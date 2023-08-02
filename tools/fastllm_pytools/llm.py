@@ -38,6 +38,8 @@ fastllm_lib.make_history_llm_model.restype = ctypes.c_char_p
 fastllm_lib.make_input_llm_model.argtype = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p]
 fastllm_lib.make_input_llm_model.restype = ctypes.c_char_p
 
+fastllm_lib.add_tokenizer_word_llm_model.argtype = [ctypes.c_int, ctypes.c_char_p, ctypes.c_float, ctypes.c_int]
+
 fastllm_lib.set_device_map.argtype = [ctypes.c_int, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p]
 
 def set_cpu_threads(threads: int):
@@ -141,6 +143,7 @@ class model:
                                                            ctypes.c_float(temperature), ctypes.c_float(repeat_penalty));
         res = "";
         ret = b'';
+        fail_cnt = 0;
         while True:
             ret += fastllm_lib.fetch_response_str_llm_model(self.model, handle);
             cur = "";
@@ -148,7 +151,12 @@ class model:
                 cur = ret.decode();
                 ret = b'';
             except:
-                pass;
+                fail_cnt += 1;
+                if (fail_cnt == 20):
+                    break;
+                else:
+                    continue;
+            fail_cnt = 0;
             if (cur == "<flmeos>"):
                 break;
             if one_by_one:
