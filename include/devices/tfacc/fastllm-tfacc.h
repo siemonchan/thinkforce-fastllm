@@ -10,7 +10,7 @@ static vector<tfacc40t::BlasopList *> FastllmTfaccBlasopCache;
 static map<long long int, vector<void *>> FastllmTfaccWeightRealSpace;
 static map<long long int, vector<tfdl::TFData *>> FastllmTfaccWeightMap;
 
-void FastllmTfaccAccumulate(float *x1, float *x2, float *y, size_t len);
+inline void FastllmTfaccAccumulate(float *x1, float *x2, float *y, size_t len);
 
 template<typename pointerType>
 void FastllmTfaccCopyStride(pointerType *dst, pointerType *src, int len, int round, int dst_stride, int src_stride);

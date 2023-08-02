@@ -10,7 +10,7 @@
 #include <numa.h>
 #include <future>
 
-vector<int> ConfigureTFACC(int coreNum, int chipNum) {
+inline vector<int> ConfigureTFACC(int coreNum, int chipNum) {
     vector<int> tfaccs;
     if (chipNum <= 0) {
         chipNum = TF_TFNN_GetChipNum();
@@ -43,7 +43,7 @@ vector<int> ConfigureTFACC(int coreNum, int chipNum) {
     return tfaccs;
 }
 
-void ConfigureKMRound(int k, int m, int cores, int *_per_k, int *_per_m, int *_k_round, int *_m_round) {
+inline void ConfigureKMRound(int k, int m, int cores, int *_per_k, int *_per_m, int *_k_round, int *_m_round) {
     int per_m = 4096;
     int per_k = 4096;
     int m_round = (m - 1) / per_m + 1;
@@ -75,7 +75,7 @@ void ConfigureKMRound(int k, int m, int cores, int *_per_k, int *_per_m, int *_k
     *_m_round = m_round;
 }
 
-void FastllmTfaccAccumulate(float *x1, float *x2, float *y, size_t len) {
+inline void FastllmTfaccAccumulate(float *x1, float *x2, float *y, size_t len) {
     size_t i = 0;
 #ifdef __aarch64__
     for (; i + 3 < len; i += 4) {
@@ -135,6 +135,8 @@ void FastllmTfaccReleaseTempMemory() {
         weightRealSpace.second.clear();
     }
     FastllmTfaccWeightRealSpace.clear();
+    // this is a trick move, clear tfacc`s memory will gain some efficiency benefit
+    tfacc40t::ReleaseAllDeviceMemory();
 }
 
 void FastllmTfaccLinearMultiCoreFloat(float *input, float *output, float *weight, float *bias, int n, int m, int k, 
