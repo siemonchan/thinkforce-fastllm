@@ -62,6 +62,7 @@ if (USE_TFACC)
 
     set(FASTLLM_TFACC_SOURCES src/devices/tfacc/tfaccdevice.cpp src/devices/tfacc/fastllm-tfacc.cpp)
 
+    include_directories(include/devices/tfacc)
     include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/thinkforce/include/tfdl)
     include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/thinkforce/include/tfacc40t)
 
