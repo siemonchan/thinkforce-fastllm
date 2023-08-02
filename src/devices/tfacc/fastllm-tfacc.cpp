@@ -146,7 +146,7 @@ void FastllmTfaccLinearMultiCoreFloat(float *input, float *output, float *weight
     // collect all available tfacc cores
     std::vector<int> all_tfacc = ConfigureTFACC(fastllm::GetThreads(), TF_TFNN_GetChipNum());
 
-    int per_n = 128;
+    int per_n = 8 * all_tfacc.size();
     int n_round = (n - 1) / per_n + 1;
     if (n_round > 1) {
         for (int i = 0; i < n_round; i++) {
@@ -376,7 +376,7 @@ void FastllmTfaccLinearMultiCoreInt8(float *input, float *output, uint8_t *weigh
     // collect all available tfacc cores
     std::vector<int> all_tfacc = ConfigureTFACC(fastllm::GetThreads(), TF_TFNN_GetChipNum());
 
-    int per_n = 128;
+    int per_n = 8 * all_tfacc.size();
     int n_round = (n - 1) / per_n + 1;
     if (n_round > 1) {
         for (int i = 0; i < n_round; i++) {
