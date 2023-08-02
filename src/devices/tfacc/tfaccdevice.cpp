@@ -126,18 +126,8 @@ namespace fastllm {
             float *outputData = (float *) output.cpuData;
             float *biasData = bias.dims.size() > 0 ? (float *) bias.cpuData : nullptr;
             
-            tfdl::TFDataFloat *tf_input = new tfdl::TFDataFloat({n, m}, inputData);
-            tfdl::TFDataFloat *tf_weight = new tfdl::TFDataFloat({k, m}, weightData);
-            tfdl::TFDataFloat *tf_output = new tfdl::TFDataFloat({n, k}, outputData);
-            tfdl::TFDataFloat *tf_bias = biasData ? new tfdl::TFDataFloat({k}, biasData) : nullptr;
-            
-            int threadNum = min(TF_TFNN_GetChipNum() * 8, GetThreads());
-            tfacc40t::LinearMultiCore(tf_input, tf_output, tf_weight, tf_bias, threadNum);
-
-            delete tf_input;
-            delete tf_output;
-            delete tf_weight;
-            delete tf_bias;
+            auto pool = GetPool();
+            FastllmTfaccLinearMultiCoreFloat(inputData, outputData, weightData, biasData, n, m, k, pool);
         } else if (weight.dataType == DataType::INT8) {
             float *inputData = (float *) input.cpuData;
             uint8_t *weightData = (uint8_t *) weight.cpuData;
@@ -149,10 +139,8 @@ namespace fastllm {
             AssertInFastLLM(weight.tfWeightConfig.configs.size() == k, 
                             "Linear`s weight config size doesn`t match the requirement of Think Force`s TFACC");
 
-            // int threadNum = min(TF_TFNN_GetChipNum() * 8, GetThreads());
             auto pool = GetPool();
-            // FastllmTfaccLinearMultiCore(inputData, outputData, weightData, biasData, n, m, k, weight.tfWeightConfig, threadNum, pool);
-            FastllmTfaccLinearMultiCoreAuto(inputData, outputData, weightData, biasData, n, m, k, weight.tfWeightConfig, pool);
+            FastllmTfaccLinearMultiCoreInt8(inputData, outputData, weightData, biasData, n, m, k, weight.tfWeightConfig, pool);
         } else {
             ErrorInFastLLM("TFACC Linear error: unsupport weight's dataType.\n");
         }
