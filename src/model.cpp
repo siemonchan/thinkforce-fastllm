@@ -57,6 +57,8 @@ namespace fastllm {
             model = (basellm*)(new ChatGLMModel());
         } else if (modelType == "moss") {
             model = (basellm*)(new MOSSModel());
+            model->weight.tokenizer.type = Tokenizer::TokenizerType::NORMAL;
+            model->eos_token_id = 106068;
         } else if (modelType == "baichuan") {
             model = (basellm*)(new LlamaModel());
             model->model_type = "baichuan";
@@ -64,6 +66,7 @@ namespace fastllm {
             model->user_role = "<human>:";
             model->bot_role = "\n<bot>:";
             model->history_sep = "\n";
+            model->weight.tokenizer.type = Tokenizer::TokenizerType::NORMAL;
         } else if (modelType == "llama") {
             model = (basellm*)(new LlamaModel());
         } else {
