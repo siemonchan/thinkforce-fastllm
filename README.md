@@ -4,7 +4,7 @@
 
 thinkfoce-fastllm是基于[fastllm](https://github.com/ztxz16/fastllm.git)开发的，支持使用ThinkForce TFACC的大模型推理库
 
-支持ChatGLM-6B, ChatGLM2-6B, Baichuan-13B-chat等开源大语言模型
+支持ChatGLM-6B, ChatGLM2-6B, Baichuan-13B-chat, Llama2等开源大语言模型
 
 ## 使用方法
 
@@ -68,6 +68,12 @@ ChatGLM2-6B (token / s):
 |----------:|----------:|----------:|----------:|
 |     TF7180|       40.9|       92.7|      111.1|
 | AMD 5975WX|       35.2|       37.0|       41.8|
+
+Llama2-7b-chat (token / s):
+|       平台|   batch 16|   batch 64|  batch 256|
+|----------:|----------:|----------:|----------:|
+|     TF7180|       23.5|       41.8|       47.2|
+| AMD 5975WX|       27.6|       40.9|       44.7|
 
 推理速度使用编译生成的benchmark程序得到，你可以通过如下方式查看它的用法
 
