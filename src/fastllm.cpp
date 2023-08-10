@@ -710,7 +710,7 @@ namespace fastllm {
         std::string ret = "unknown";
     #ifdef USE_MMAP
         std::unique_ptr<FileMmap> mapped_file = std::make_unique<FileMmap>(fileName);
-        ModelLoader buffer(std::string((char *)mapped_file->data, mapped_file->size));
+        ModelLoader buffer((char *)mapped_file->data, mapped_file->size);
     #else
         FileBuffer buffer(fileName);
     #endif
@@ -1024,7 +1024,7 @@ namespace fastllm {
     void WeightMap::LoadFromFile(const std::string &fileName) {
     #ifdef USE_MMAP
         std::shared_ptr<FileMmap> mapped_file = std::make_shared<FileMmap>(fileName);
-        ModelLoader buffer(std::string((char *)mapped_file->data, mapped_file->size));
+        ModelLoader buffer((char *)mapped_file->data, mapped_file->size);
     #else
         FileBuffer buffer(fileName);
     #endif
