@@ -982,10 +982,10 @@ namespace fastllm {
                     if (specialTokens.find(special) != specialTokens.end()) {
                         v.push_back(specialTokens[special]);
                     }
-    
+
                     i += sep.back().second - 1;
                     sep.pop_back();
-                    
+
                     continue;
                 }
 
@@ -1005,14 +1005,13 @@ namespace fastllm {
                 }
                 if (pos >= i) {
                     symbols.push_back(Symbol(now, (char *) ori.data(), i, pos - i + 1, (int) symbols.size() - 1,
-                                             (int) symbols.size() + 1));
+                                             (int) symbols.size() + 1, -999999));
                     i = pos;
                 } else {
                     symbols.push_back(Symbol(nullptr, (char *) ori.data(), i, 0, (int) symbols.size() - 1,
-                                             (int) symbols.size() + 1));
+                                             (int) symbols.size() + 1, -999999));
                 }
             }
-            
             return Data (DataType::FLOAT32, {1, (int)v.size()}, v);
         } else {
             std::vector <float> v;
@@ -1137,7 +1136,7 @@ namespace fastllm {
                 break;
             }
         }
-        float rnd = fastllmRandom.randP();
+        float rnd = fastllmRandom.randP() * curSum;
         curSum = 0.0;
         for (int i = 0; i < topk; i++) {
             curSum += ps[i];

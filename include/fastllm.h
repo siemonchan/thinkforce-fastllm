@@ -313,7 +313,7 @@ namespace fastllm {
         enum TokenizerType {
             BPE = 0,
             NORMAL = 1,
-            QWEN
+            QWEN = 2
         };
 
         struct TrieNode {
