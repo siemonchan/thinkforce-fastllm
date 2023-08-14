@@ -6,6 +6,7 @@
 
 #include "fastllm.h"
 
+static map<int, pair<int, int>> FastllmTfaccKMRoundMap;
 static vector<tfacc40t::BlasopList *> FastllmTfaccBlasopCache;
 static map<long long int, vector<void *>> FastllmTfaccWeightRealSpace;
 static map<long long int, vector<tfdl::TFData *>> FastllmTfaccWeightMap;

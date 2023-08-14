@@ -44,20 +44,79 @@ inline vector<int> ConfigureTFACC(int coreNum, int chipNum) {
 }
 
 inline void ConfigureKMRound(int k, int m, int cores, int *_per_k, int *_per_m, int *_k_round, int *_m_round) {
+    // 切分查找表，如果当前形状已经计算过，直接查找结果返回
+    if (FastllmTfaccKMRoundMap.find(k * m + m) != FastllmTfaccKMRoundMap.end()) {
+        *_per_m = FastllmTfaccKMRoundMap[k * m + m].first;    
+        *_per_k = FastllmTfaccKMRoundMap[k * m + m].second;
+        *_m_round = (m - 1) / *_per_m + 1;
+        *_k_round = (k - 1) / *_per_k + 1;
+        return;
+    }
+
+    // 初始切割条件
     int per_m = 4096;
     int per_k = 4096;
     int m_round = (m - 1) / per_m + 1;
     int k_round = (k - 1) / per_k + 1;
-    while (m_round * k_round <= cores / 4 && per_m / 2 >= 1024) {
-        per_m /= 2;
-        per_k /= 2;
-        m_round = (m - 1) / per_m + 1;
-        k_round = (k - 1) / per_k + 1;
+    int per_m_lower_limit = 1024;
+    int per_k_lower_limit = 1024;
+
+    // 粗略缩放，按照2倍递减
+    while (m_round * k_round <= cores && per_m / 2 >= per_m_lower_limit && per_k / 2 >= per_k_lower_limit) {
+        int new_per_m = per_m / 2;
+        int new_m_round = (m - 1) / new_per_m + 1;
+        if (new_m_round * k_round <= cores) {
+            per_m = new_per_m;
+            m_round = new_m_round;
+        } else {
+            break;
+        }
+
+        int new_per_k = per_k / 2;
+        int new_k_round = (k - 1) / new_per_k + 1;
+        if (m_round * new_k_round <= cores) {
+            per_k = new_per_k;
+            k_round = new_k_round;
+        } else {
+            break;
+        }
     }
-    while (m_round * k_round <= cores / 2 && per_m / 2 >= 1024) {
-        per_m /= 2;
-        m_round = (m - 1) / per_m + 1;
+
+    // 进一步缩放，按照64对齐切割
+    if (m_round * k_round < cores) {
+        if (cores % m_round == 0) {
+            int new_k_round = cores / m_round;
+            if ((k / new_k_round) % 64 == 0) {
+                k_round = new_k_round;
+                per_k = k / k_round;
+            }
+        }
+        if (cores % k_round == 0) {
+            int new_m_round = cores / k_round;
+            if ((m / new_m_round) % 64 == 0) {
+                m_round = new_m_round;
+                per_m = m / m_round;
+            }
+        }
+        while (true) {
+            if (m_round * (k_round + 1) <= cores && k % (64 * (k_round + 1)) == 0) {
+                k_round++;
+                per_k = k / k_round;
+            } else {
+                break;
+            }
+        }
+        while (true) {
+            if (k_round * (m_round + 1) <= cores && m % (64 * (m_round + 1)) == 0) {
+                m_round++;
+                per_m = m / m_round;
+            } else {
+                break;
+            }
+        }
     }
+
+    // 处理大矩阵
     while (m_round * k_round >= cores * 4 && per_k * 2 <= 65536) {
         per_m *= 2;
         per_k *= 2;
@@ -69,10 +128,19 @@ inline void ConfigureKMRound(int k, int m, int cores, int *_per_k, int *_per_m, 
         k_round = (k - 1) / per_k + 1;
     }
 
+    if (m % (64 * m_round) == 0) {
+        per_m = m / m_round;
+    }
+    if (k % (64 * k_round) == 0) {
+        per_k = k / k_round;
+    }
+
     *_per_k = per_k;
     *_per_m = per_m;
     *_k_round = k_round;
     *_m_round = m_round;
+    FastllmTfaccKMRoundMap[k * m + m].first = per_m;
+    FastllmTfaccKMRoundMap[k * m + m].second = per_k;
 }
 
 inline void FastllmTfaccAccumulate(float *x1, float *x2, float *y, size_t len) {
@@ -168,7 +236,7 @@ void FastllmTfaccLinearMultiCoreFloat(float *input, float *output, float *weight
     long long int weight_key = (long long int) weight;
     if (FastllmTfaccWeightMap[weight_key].empty()) {
         printf("[%d, %d] x [%d, %d] -> [%d, %d]\n", n, m, k, m, n, k);
-        printf("prepare weight, n_round: %d, m_round: %d, k_round: %d\n", n_round, m_round, k_round);
+        printf("prepare weight, n_round: %d, m_round: %d, k_round: %d per_m: %d, per_k: %d\n", n_round, m_round, k_round, per_m, per_k);
 
         vector<future<void>> futures;
         for (int k_iter = 0; k_iter < k_round; k_iter++) {
@@ -410,7 +478,7 @@ void FastllmTfaccLinearMultiCoreInt8(float *input, float *output, uint8_t *weigh
     long long int weight_key = (long long int) weight;
     if (FastllmTfaccWeightMap[weight_key].empty()) {
         printf("[%d, %d] x [%d, %d] -> [%d, %d]\n", n, m, k, m, n, k);
-        printf("prepare weight, n_round: %d, m_round: %d, k_round: %d\n", n_round, m_round, k_round);
+        printf("prepare weight, n_round: %d, m_round: %d, k_round: %d per_m: %d, per_k: %d\n", n_round, m_round, k_round, per_m, per_k);
 
         vector<future<void>> futures;
         for (int k_iter = 0; k_iter < k_round; k_iter++) {
