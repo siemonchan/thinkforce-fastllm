@@ -22,26 +22,8 @@
 #include "fastllm-cuda.cuh"
 #endif
 
-#ifdef USE_TFACC40T
-#include "fastllm-tfacc.h"
-#endif
-
 namespace fastllm {
     extern double GetSpan(std::chrono::system_clock::time_point time1, std::chrono::system_clock::time_point time2);
-
-    // void Checker(Data &data, std::string dump_name = "") {
-    //     std::vector<float> checker((float *) data.cpuData, (float *) data.cpuData + data.Count(0));
-
-    //     if (!dump_name.empty()) {
-    //         std::FILE *dump_file = std::fopen(dump_name.c_str(), "w");
-    //         for (int i = 0; i < data.Count(0); i++) {
-    //             fprintf(dump_file, "%f\n", ((float *) data.cpuData)[i]);
-    //         }
-    //         std::fclose(dump_file);
-    //     }
-
-    //     return;
-    // }
 
     QWenModel::QWenModel() {
         this->model_type = "qwen";
@@ -72,6 +54,8 @@ namespace fastllm {
                 logn[i] = std::log(i) / std::log(seq_length);
             }
         }
+
+        weight.embeddingNames.insert("transformer.wte.weight");
     }
 
     int QWenModel::Forward(const Data &inputIds,
@@ -430,14 +414,28 @@ namespace fastllm {
     }
 
     std::string QWenModel::MakeInput(const std::string &history, int round, const std::string &input) {
-        return (round == 0 ? im_start + "system" + "\n" + pre_prompt + im_end : history) + 
-            "\n" + im_start + user_role + "\n" + input + im_end + "\n" + im_start + bot_role + "\n";
+        if (weight.dicts["chat_format"] == "chatml") {
+            return (round == 0 ? im_start + "system" + "\n" + pre_prompt + im_end : history) + 
+                "\n" + im_start + user_role + "\n" + input + im_end + "\n" + im_start + bot_role + "\n";
+        } else if (weight.dicts["chat_format"] == "raw") {
+            return history + input;
+        } else {
+            ErrorInFastLLM("Unknown char_format for QWen: " + weight.dicts["chat_format"]);
+            return "";
+        }
     }
 
     std::string QWenModel::MakeHistory(const std::string &history, int round, 
                                        const std::string &input, const std::string &output) {
-        return (round == 0 ? im_start + "system" + "\n" + pre_prompt + im_end : history) + 
-            "\n" + im_start + user_role + "\n" + input + im_end + "\n" + im_start + bot_role + "\n" + output + im_end;
+        if (weight.dicts["chat_format"] == "chatml") {
+            return (round == 0 ? im_start + "system" + "\n" + pre_prompt + im_end : history) + 
+                "\n" + im_start + user_role + "\n" + input + im_end + "\n" + im_start + bot_role + "\n" + output + im_end;
+        } else if (weight.dicts["chat_format"] == "raw") {
+            return history + input + output;
+        } else {
+            ErrorInFastLLM("Unknown char_format for QWen: " + weight.dicts["chat_format"]);
+            return "";
+        }
     }
 
     void QWenModel::FillLLMInputs(std::vector <std::vector <float> > &inputTokens,
