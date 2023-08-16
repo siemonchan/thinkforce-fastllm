@@ -22,6 +22,10 @@
 #include "fastllm-cuda.cuh"
 #endif
 
+#ifdef USE_TFACC40T
+#include "fastllm-tfacc.h"
+#endif
+
 namespace fastllm {
     extern double GetSpan(std::chrono::system_clock::time_point time1, std::chrono::system_clock::time_point time2);
 
