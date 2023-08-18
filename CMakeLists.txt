@@ -4,7 +4,7 @@ project(fastllm LANGUAGES CXX)
 
 option(USE_CUDA "use cuda" OFF)
 
-option(USE_TFACC "use tfacc" ON)
+option(USE_TFACC "use tfacc" OFF)
 
 option(PY_API "python api" OFF)
 option(USE_MMAP "use mmap" OFF)
