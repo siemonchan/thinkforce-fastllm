@@ -31,6 +31,7 @@ inline vector<int> ConfigureTFACC(int coreNum, int chipNum) {
         }
     }
     chipNum = chips.size();
+    coreNum = min(coreNum, chipNum * 8);
     int each = coreNum / chipNum;
     int last = coreNum - (chipNum - 1) * each;
     for (int j = 0; j < each; j++) {
