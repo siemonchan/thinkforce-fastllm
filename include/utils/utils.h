@@ -33,10 +33,10 @@ namespace fastllm {
     }
 
     #define ErrorInFastLLM(error) \
-        ErrorInFastLLMCore(error, __func__);
+        fastllm::ErrorInFastLLMCore(error, __func__);
     
     #define WarningInFastLLM(warning) \
-        WarningInFastLLMCore(warning, __func__);
+        fastllm::WarningInFastLLMCore(warning, __func__);
 
     static void ErrorInFastLLMCore(const std::string &error, const char *f) {
         printf("FastLLM Error @ %s: %s\n", f, error.c_str());
