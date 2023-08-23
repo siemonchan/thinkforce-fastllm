@@ -34,3 +34,5 @@ token
 /test/cmmlu/result/
 /third_party/thinkforce/pull.sh
 /models/
+/third_party/tfdl
+/third_party/pybind11

@@ -11,6 +11,8 @@
 #ifdef USE_TFACC40T
 #include "tfacc40t.h"
 #include "tfnn.h"
+
+#include <mutex>
 #endif
 
 namespace tfacc10t {
@@ -55,15 +57,17 @@ namespace tfacc10t {
 }
 
 namespace tfacc40t {
-    #define MAXCHIPNUM 4
-
-    typedef float (*functionType)(float);
-
-    bool IsPacked(const vector<int> &dims);
-
-    int GetAlignedSpatial(int h, int w);
-
+#define MAXCHIPNUM 4
 #ifdef  USE_TFACC40T
+    static std::mutex thread_lock;
+
+    static map<long long int, tfacc40t::MEM_U8 *> tfacc40t_weight_map[MAXCHIPNUM];
+    static map<long long int, tfacc40t::MEM_U8 *> tfacc40t_bias_map[MAXCHIPNUM];
+    static map<long long int, vector<vector<float>>> tfacc40t_weight_sum[MAXCHIPNUM];
+    static map<long long int, tfdl::PerChannelConfig> tfacc40t_weight_config[MAXCHIPNUM];
+
+    static vector<pair<bool, tfacc40t::MEM_U8 *>> tfacc40t_data_pool[8 * MAXCHIPNUM];
+
     template<typename T>
     tfacc40t::Memory<T> *MallocDeviceMemory(int requiredSize, int deviceId);
 
@@ -102,26 +106,34 @@ namespace tfacc40t {
                      int deviceId, int outputChannels, int group, int kernelH, int kernelW, int strideH, int strideW,
                      int padHBegin, int padHEnd, int padWBegin, int padWEnd, int dilationH, int dilationW, bool relu);
     
-    void Linear(tfdl::TFDataInt8 *input, tfdl::TFDataInt8 *output, tfdl::TFDataInt8 *weight, tfdl::TFDataInt8 *bias,
-                int deviceId);
-    
-    void Linear(tfdl::TFDataFloat *input, tfdl::TFDataFloat *output, tfdl::TFDataFloat *weight, tfdl::TFDataFloat *bias,
-                int deviceId);
-    
     void InnerProduct(tfdl::TFDataInt8 *input, tfdl::TFDataInt8 *output, tfdl::TFDataInt8 *weight, tfdl::TFDataInt8 *bias,
                       int deviceId);
 
-    void InnerProduct(tfdl::TFDataInt8 *input, tfdl::TFDataFloat *output, tfdl::TFDataFloat *weight, tfdl::TFDataFloat *bias,
-                      int deviceId, void *blasopCache = nullptr);
-
     void InnerProduct(tfdl::TFDataInt8 *input, tfdl::TFDataFloat *output, tfdl::TFDataInt8 *weight, tfdl::TFDataFloat *bias,
-                      int deviceId, void *blasopCache = nullptr);
+                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
+
+    void InnerProduct(tfdl::TFDataInt8 *input, tfdl::TFDataFloat *output, tfdl::TFDataFloat *weight, tfdl::TFDataFloat *bias,
+                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
 
     void InnerProduct(tfdl::TFDataFloat *input, tfdl::TFDataFloat *output, tfdl::TFDataFloat *weight, tfdl::TFDataFloat *bias,
-                      int deviceId, void *blasopCache = nullptr);
+                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
 
     void InnerProduct(tfdl::TFDataFloat *input, tfdl::TFDataFloat *output, tfdl::TFDataInt8 *weight, tfdl::TFDataFloat *bias,
-                      int deviceId, void *blasopCache = nullptr);
+                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
+
+#ifdef __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
+    void InnerProduct(tfdl::TFDataInt8 *input, tfdl::TFDataFloat16 *output, tfdl::TFDataInt8 *weight, tfdl::TFDataFloat *bias,
+                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
+
+    void InnerProduct(tfdl::TFDataInt8 *input, tfdl::TFDataFloat16 *output, tfdl::TFDataFloat16 *weight, tfdl::TFDataFloat *bias,
+                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
+
+    void InnerProduct(tfdl::TFDataFloat16 *input, tfdl::TFDataFloat16 *output, tfdl::TFDataFloat16 *weight, tfdl::TFDataFloat *bias,
+                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
+
+    void InnerProduct(tfdl::TFDataFloat *input, tfdl::TFDataFloat16 *output, tfdl::TFDataInt8 *weight, tfdl::TFDataFloat *bias,
+                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
+#endif
 
     void Pooling(tfdl::TFDataInt8 *input, tfdl::TFDataInt8 *output, int deviceId, int kernel, int stride, int pad, string type);
 
@@ -130,16 +142,10 @@ namespace tfacc40t {
     void BatchMatrixMul(tfdl::TFDataFloat *x, tfdl::TFDataFloat *y, tfdl::TFDataFloat *output, int device_id,
                         void *blasopCache = nullptr);
 
-#ifdef USE_TFACC40T
-    void LinearMultiCore(tfdl::TFDataFloat *input, tfdl::TFDataFloat *output, tfdl::TFData *weight, tfdl::TFDataFloat *bias,
-                         int cores, int chipNum = 0);
-
-    void BatchMatrixMulMultiCore(tfdl::TFDataFloat *x, tfdl::TFDataFloat *y, tfdl::TFDataFloat *output, int cores, int chipNum = 0);
-
+    typedef float (*functionType)(float);
     void MapTable(tfdl::TFDataFloat *input, tfdl::TFDataFloat *output, functionType function, int deviceId);
 
     void DotProd(float *input, float *weight, float *output, int channel, int len, int weightStride, int deviceId);
-#endif
 }
 
 namespace tfdl {

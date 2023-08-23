@@ -384,7 +384,9 @@ namespace tfdl {
 
     class TFDataInt8;
     class TFDataInt16;
+    class TFDataInt32;
     class TFDataFloat;
+    class TFDataFloat16;
 
     class TFDataInt8 : public TFData {
     public:
@@ -414,8 +416,12 @@ namespace tfdl {
         // 用origin的范围, 尺寸, 数据创建TFDataInt8
         TFDataInt8(TFDataFloat *origin);
 
+        TFDataInt8(TFDataFloat16 *origin);
+
         // 用origin的范围, 尺寸, 数据创建TFDataInt8, 并以perchannelAxis维做多通道量化
         TFDataInt8(TFDataFloat *origin, int perchannelAxis);
+
+        TFDataInt8(TFDataFloat16 *origin, int perChannelAxis);
 
         // 用origin的范围, 尺寸, 数据创建TFDataInt8
         TFDataInt8(TFData *origin);
@@ -568,6 +574,39 @@ namespace tfdl {
 
         // 获取float实际地址
         float * GetFloatRawData() const;
+    };
+
+    class TFDataFloat16 : public TFData {
+    public:
+        TFDataFloat16();
+
+        TFDataFloat16(const vector<int> &_dims);
+
+        TFDataFloat16(const vector<int> &_dims, const vector<uint16_t> &values);
+
+        TFDataFloat16(const vector<int> &_dims, uint16_t *data);
+
+        ~TFDataFloat16();
+
+        void Create(const vector<int> &_dims);
+
+        void Create(const vector<int> &_dims, const vector<float> &values);
+
+        void Create(const vector<int> &_dims, const vector<uint16_t> &values);
+
+        float GetMinValue() const;
+
+        float GetMaxValue() const;
+
+        float GetMinValue(int start, int end) const;
+
+        float GetMaxValue(int start, int end) const;
+
+        void GetFloatData(float * floatData) const;
+
+        void SetFloatData(float * floatData) const;
+
+        uint16_t *GetFloat16RawData() const;
     };
 }
 
