@@ -473,27 +473,16 @@ void FastllmTfaccLinearFloat16WFloat16D(uint16_t *input, uint16_t *output, uint1
             int cur_n = min(per_n, n - (i * per_n));
             uint16_t *cur_input = input + i * per_n * m;
             uint16_t *cur_output = output + i * per_n * k;
-            FastllmTfaccLinearFloat16WFloat16D(cur_input, cur_output, weight, bias, n, m, k, pool);
+            FastllmTfaccLinearFloat16WFloat16D(cur_input, cur_output, weight, bias, cur_n, m, k, pool);
         }
+        return;
     }
 
     int per_k, per_m, k_round, m_round;
     ConfigureKMRound(k, m, all_tfacc.size(), &per_k, &per_m, &k_round, &m_round);
 
     // create space for blasop
-    if (FastllmTfaccBlasopCache.empty()) {
-        int maxCmdNum = 60000;
-        int total_cores = 8 * TF_TFNN_GetChipNum();
-        for (int i = 0; i < total_cores; i++) {
-            FastllmTfaccBlasopCache.push_back(new tfacc40t::BlasopList(TF_TFNN_GetChipId(i), maxCmdNum));
-        }
-
-        printf("tfaccs: ");
-        for (auto tfacc : all_tfacc) {
-            printf("%d ", tfacc);
-        }
-        printf("\n");
-    }
+    FastllmTfaccInitBlasop();
 
     // prepare weight
     long long int weight_key = (long long int) weight;
@@ -611,7 +600,7 @@ void FastllmTfaccLinearFloat16WFloat16D(uint16_t *input, uint16_t *output, uint1
                 src.push_back(temp_output[k_iter * m_round + m_iter]->GetFloat16RawData());
             }
             int per_n = 64;
-            for (int n_iter = 0; n_iter < n; n_iter++) {
+            for (int n_iter = 0; n_iter < n; n_iter += per_n) {
                 int cur_n = min(per_n, n - n_iter);
                 futures.push_back(pool->Submit([](uint16_t *dst, vector<uint16_t *> src, int len, int shift){
                     for (int i = 0; i < src.size(); i++) {
@@ -716,19 +705,7 @@ void FastllmTfaccLinearUint8WFloat32D(float *input, float *output, uint8_t *weig
     ConfigureKMRound(k, m, all_tfacc.size(), &per_k, &per_m, &k_round, &m_round);
 
     // create space for blasop
-    if (FastllmTfaccBlasopCache.empty()) {
-        int maxCmdNum = 60000;
-        int total_cores = 8 * TF_TFNN_GetChipNum();
-        for (int i = 0; i < total_cores; i++) {
-            FastllmTfaccBlasopCache.push_back(new tfacc40t::BlasopList(TF_TFNN_GetChipId(i), maxCmdNum));
-        }
-
-        printf("tfaccs: ");
-        for (auto tfacc : all_tfacc) {
-            printf("%d ", tfacc);
-        }
-        printf("\n");
-    }
+    FastllmTfaccInitBlasop();
 
     // prepare weight
     long long int weight_key = (long long int) weight;
@@ -940,27 +917,16 @@ void FastllmTfaccLinearUint8WFloat16D(uint16_t *input, uint16_t *output, uint8_t
             int cur_n = min(per_n, n - (i * per_n));
             uint16_t *cur_input = input + i * per_n * m;
             uint16_t *cur_output = output + i * per_n * k;
-            FastllmTfaccLinearUint8WFloat16D(cur_input, cur_output, weight, bias, n, m, k, tfWeightConfig, pool);
+            FastllmTfaccLinearUint8WFloat16D(cur_input, cur_output, weight, bias, cur_n, m, k, tfWeightConfig, pool);
         }
+        return;
     }
 
     int per_k, per_m, k_round, m_round;
     ConfigureKMRound(k, m, all_tfacc.size(), &per_k, &per_m, &k_round, &m_round);
 
     // create space for blasop
-    if (FastllmTfaccBlasopCache.empty()) {
-        int maxCmdNum = 60000;
-        int total_cores = 8 * TF_TFNN_GetChipNum();
-        for (int i = 0; i < total_cores; i++) {
-            FastllmTfaccBlasopCache.push_back(new tfacc40t::BlasopList(TF_TFNN_GetChipId(i), maxCmdNum));
-        }
-
-        printf("tfaccs: ");
-        for (auto tfacc : all_tfacc) {
-            printf("%d ", tfacc);
-        }
-        printf("\n");
-    }
+    FastllmTfaccInitBlasop();
 
     // prepare weight
     long long int weight_key = (long long int) weight;
@@ -1068,6 +1034,32 @@ void FastllmTfaccLinearUint8WFloat16D(uint16_t *input, uint16_t *output, uint8_t
         one_future.get();
     }
     futures.clear();
+
+    // post process temp output
+    // 1. accumulate m direction
+    if (m_round > 1) {
+        for (int k_iter = 0; k_iter < k_round; k_iter++) {
+            int cur_k = min(per_k, k - k_iter * per_k);
+            uint16_t *dst = temp_output[k_iter * m_round]->GetFloat16RawData();
+            vector<uint16_t *> src;
+            for (int m_iter = 1; m_iter < m_round; m_iter++) {
+                src.push_back(temp_output[k_iter * m_round + m_iter]->GetFloat16RawData());
+            }
+            int per_n = 64;
+            for (int n_iter = 0; n_iter < n; n_iter += per_n) {
+                int cur_n = min(per_n, n - n_iter);
+                futures.push_back(pool->Submit([](uint16_t *dst, vector<uint16_t *> src, int len, int shift){
+                    for (int i = 0; i < src.size(); i++) {
+                        FastllmTfaccAccumulateFloat16(src[i] + shift, dst + shift, dst + shift, len);
+                    }
+                }, dst, src, cur_n * cur_k, n_iter * cur_k));
+            }
+        }
+        for (auto &one_future : futures) {
+            one_future.get();
+        }
+        futures.clear();
+    }
 
     // 2. copy k direction
     for (int k_iter = 0; k_iter < k_round; k_iter++) {
