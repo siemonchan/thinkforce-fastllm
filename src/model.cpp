@@ -7,6 +7,7 @@
 #include "moss.h"
 #include "llama.h"
 #include "qwen.h"
+#include "decicoder.h"
 
 namespace fastllm {
     void basellm::LoadFromFile(const std::string &fileName) {
@@ -77,6 +78,9 @@ namespace fastllm {
         } else if (modelType == "qwen") {
             model = (basellm *) (new QWenModel());
             model->weight.tokenizer.type = Tokenizer::TokenizerType::QWEN;
+        } else if (modelType == "decicoder") {
+            model = (basellm*) (new DeciCoderModel());
+            model->weight.tokenizer.type = Tokenizer::TokenizerType::GPT2;
         } else {
             ErrorInFastLLM("Unkown model type: " + modelType);
         }
