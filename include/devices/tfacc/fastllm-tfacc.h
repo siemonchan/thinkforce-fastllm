@@ -33,7 +33,10 @@ void FastllmTfaccClearMemory();
 void FastllmTfaccReleaseTempMemory();
 
 void FastllmTfaccLinearFloat32WFloat32D(float *input, float *output, float *weight, float *bias, int n, int m, int k, 
-                                       fastllm::ThreadPool *pool);
+                                        fastllm::ThreadPool *pool);
+
+void FastllmTfaccLinearFloat16WFloat32D(float *input, float *output, uint16_t *weight, float *bias, int n, int m, int k,
+                                        fastllm::ThreadPool *pool);
 
 void FastllmTfaccLinearFloat16WFloat16D(uint16_t *input, uint16_t *output, uint16_t *weight, float *bias, int n, int m, int k,
                                         fastllm::ThreadPool *pool);

@@ -87,13 +87,15 @@ namespace fastllm {
 
     bool TfaccLinearOp::CanRun(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams) {
         Data &input = *(datas.find("input")->second);
-        Data &output = *(datas.find("output")->second);
         Data &weight = *(datas.find("weight")->second);
         int m = weight.dims[1];
         int k = weight.dims[0];
         return m >= 1024 && k >= 1024 && (
-               (input.dataType == DataType::FLOAT32 && (weight.dataType == DataType::FLOAT32 || weight.dataType == DataType::INT8)) ||
-               (input.dataType == DataType::FLOAT16 && (weight.dataType == DataType::FLOAT16 || weight.dataType == DataType::INT8)));
+               (input.dataType == DataType::FLOAT32 && (weight.dataType == DataType::FLOAT32 || 
+                                                        weight.dataType == DataType::FLOAT16 || 
+                                                        weight.dataType == DataType::INT8)) ||
+               (input.dataType == DataType::FLOAT16 && (weight.dataType == DataType::FLOAT16 || 
+                                                        weight.dataType == DataType::INT8)));
     }
 
     void TfaccLinearOp::Reshape(const std::string &opType, const DataDict &datas, const FloatDict &floatParams, const IntDict &intParams) {
@@ -132,6 +134,14 @@ namespace fastllm {
                 
                 auto pool = GetPool();
                 FastllmTfaccLinearFloat32WFloat32D(inputData, outputData, weightData, biasData, n, m, k, pool);
+            } else if (weight.dataType == DataType::FLOAT16) {
+                float *inputData = (float *) input.cpuData;
+                uint16_t *weightData = (uint16_t *) weight.cpuData;
+                float *outputData = (float *) output.cpuData;
+                float *biasData = bias.dims.size() > 0 ? (float *) bias.cpuData : nullptr;
+
+                auto pool = GetPool();
+                FastllmTfaccLinearFloat16WFloat32D(inputData, outputData, weightData, biasData, n, m, k, pool);
             } else if (weight.dataType == DataType::INT8) {
                 float *inputData = (float *) input.cpuData;
                 uint8_t *weightData = (uint8_t *) weight.cpuData;

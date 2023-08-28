@@ -384,7 +384,6 @@ namespace tfdl {
 
     class TFDataInt8;
     class TFDataInt16;
-    class TFDataInt32;
     class TFDataFloat;
     class TFDataFloat16;
 
@@ -419,7 +418,7 @@ namespace tfdl {
         TFDataInt8(TFDataFloat16 *origin);
 
         // 用origin的范围, 尺寸, 数据创建TFDataInt8, 并以perchannelAxis维做多通道量化
-        TFDataInt8(TFDataFloat *origin, int perchannelAxis);
+        TFDataInt8(TFDataFloat *origin, int perChannelAxis);
 
         TFDataInt8(TFDataFloat16 *origin, int perChannelAxis);
 

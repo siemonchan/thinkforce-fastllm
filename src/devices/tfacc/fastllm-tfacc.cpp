@@ -244,6 +244,96 @@ void FastllmTfaccReleaseTempMemory() {
     tfacc40t::ReleaseAllDeviceMemory();
 }
 
+template <typename pointerType>
+std::vector<tfdl::TFDataInt8 *> FastllmLinearPrepareInputData(pointerType *input, int n, int m, int per_m, int m_round, fastllm::ThreadPool *pool) {
+    vector<tfdl::TFDataInt8 *> temp_input;
+    if (typeid(pointerType) == typeid(float)) {
+        if (n == 1) {
+            for (int i = 0; i < m_round; i++) {
+                int cur_m = min(per_m, m - (i * per_m));
+                tfdl::TFDataFloat origin = tfdl::TFDataFloat({n, cur_m}, (float *) input + i * per_m);
+                temp_input.push_back(new tfdl::TFDataInt8(&origin));
+            }
+        } else {
+            auto input_tf = tfdl::TFDataFloat({n, m}, (float *) input);
+            tfdl::PerChannelConfig perChannelConfig;
+            for (int i = 0; i < n; i++) {
+                int st = i * m;
+                int end = i * m + m;
+                float minValue = input_tf.GetMinValue(st, end), maxValue = input_tf.GetMaxValue(st, end);
+                perChannelConfig.configs.push_back(tfdl::QuantizationConfig(minValue, maxValue));
+            }
+            for (int i = 0; i < m_round; i++) {
+                int cur_m = min(per_m, m - (i * per_m));
+                temp_input.push_back(new tfdl::TFDataInt8(0, 0, {n, cur_m}));
+                temp_input.back()->SetPerChannelConfig(perChannelConfig);
+            }
+
+            // quantize input
+            vector<future<void>> futures;
+            for (int i = 0; i < m_round; i++) {
+                int cur_m = min(per_m, m - (i * per_m));
+                futures.push_back(pool->Submit([](uint8_t *dst, float *src, int len, int round, int dst_stride, int src_stride, tfdl::PerChannelConfig config){          
+                    FastllmTfaccQuantization(dst, src, len, round, dst_stride, src_stride, config);
+                }, temp_input[i]->GetInt8RawData(), (float *) input + i * per_m, cur_m, n, cur_m, m, perChannelConfig));
+            }
+            for (auto &one_future : futures) {
+                one_future.get();
+            }
+        }
+    } else if (typeid(pointerType) == typeid(uint16_t)) {
+        if (n == 1) {
+            for (int i = 0; i < m_round; i++) {
+                int cur_m = min(per_m, m - i * per_m);
+                tfdl::TFDataFloat16 origin = tfdl::TFDataFloat16({n, cur_m}, (uint16_t *) input + i * per_m);
+                temp_input.push_back(new tfdl::TFDataInt8(&origin));
+            }
+        } else {
+            auto input_tf = tfdl::TFDataFloat16({n, m}, (uint16_t *) input);
+            tfdl::PerChannelConfig perChannelConfig;
+            for (int i = 0; i < n; i++) {
+                int st = i * m;
+                int end = i * m + m;
+                float minValue = input_tf.GetMinValue(st, end), maxValue = input_tf.GetMaxValue(st, end);
+                perChannelConfig.configs.push_back(tfdl::QuantizationConfig(minValue, maxValue));
+            }
+            for (int i = 0; i < m_round; i++) {
+                int cur_m = min(per_m, m - (i * per_m));
+                temp_input.push_back(new tfdl::TFDataInt8(0, 0, {n, cur_m}));
+                temp_input.back()->SetPerChannelConfig(perChannelConfig);
+            }
+
+            // quantize input
+            vector<future<void>> futures;
+            for (int i = 0; i < m_round; i++) {
+                int cur_m = min(per_m, m - (i * per_m));
+                futures.push_back(pool->Submit([](uint8_t *dst, uint16_t *src, int len, int round, int dst_stride, int src_stride, tfdl::PerChannelConfig config){          
+                    FastllmTfaccQuantization(dst, src, len, round, dst_stride, src_stride, config);
+                }, temp_input[i]->GetInt8RawData(), (uint16_t *) input + i * per_m, cur_m, n, cur_m, m, perChannelConfig));
+            }
+            for (auto &one_future : futures) {
+                one_future.get();
+            }
+        }
+    } else {
+        ErrorInFastLLM("wrong input data type.\n");
+    }
+
+    return temp_input;
+}
+
+template <typename tfDataType>
+vector<tfDataType *> FastllmLinearPrepareOutputData(int n, int k, int per_k, int m_round, int k_round) {
+    std::vector<tfDataType *> temp_output;
+    for (int k_iter = 0; k_iter < k_round; k_iter++) {
+        int cur_k = min(per_k, k - (k_iter * per_k));
+        for (int m_iter = 0; m_iter < m_round; m_iter++) {
+            temp_output.push_back(new tfDataType({n, cur_k}));
+        }
+    }
+    return temp_output;
+}
+
 void FastllmTfaccLinearFloat32WFloat32D(float *input, float *output, float *weight, float *bias, int n, int m, int k, 
                                         fastllm::ThreadPool *pool) {
     auto t0 = chrono::system_clock::now();
@@ -302,49 +392,10 @@ void FastllmTfaccLinearFloat32WFloat32D(float *input, float *output, float *weig
     }
 
     // quantize input data
-    vector<tfdl::TFDataInt8 *> temp_input;
-    if (n == 1) {
-        for (int i = 0; i < m_round; i++) {
-            int cur_m = min(per_m, m - (i * per_m));
-            tfdl::TFDataFloat origin = tfdl::TFDataFloat({n, cur_m}, input + i * per_m);
-            temp_input.push_back(new tfdl::TFDataInt8(&origin));
-        }
-    } else {
-        auto input_tf = tfdl::TFDataFloat({n, m}, input);
-        tfdl::PerChannelConfig perChannelConfig;
-        for (int i = 0; i < n; i++) {
-            int st = i * m;
-            int end = i * m + m;
-            float minValue = input_tf.GetMinValue(st, end), maxValue = input_tf.GetMaxValue(st, end);
-            perChannelConfig.configs.push_back(tfdl::QuantizationConfig(minValue, maxValue));
-        }
-        for (int i = 0; i < m_round; i++) {
-            int cur_m = min(per_m, m - (i * per_m));
-            temp_input.push_back(new tfdl::TFDataInt8(0, 0, {n, cur_m}));
-            temp_input.back()->SetPerChannelConfig(perChannelConfig);
-        }
-
-        // quantize input
-        vector<future<void>> futures;
-        for (int i = 0; i < m_round; i++) {
-            int cur_m = min(per_m, m - (i * per_m));
-            futures.push_back(pool->Submit([](uint8_t *dst, float *src, int len, int round, int dst_stride, int src_stride,tfdl::PerChannelConfig config){          
-                FastllmTfaccQuantization(dst, src, len, round, dst_stride, src_stride, config);
-            }, temp_input[i]->GetInt8RawData(), input + i * per_m, cur_m, n, cur_m, m, perChannelConfig));
-        }
-        for (auto &one_future : futures) {
-            one_future.get();
-        }
-    }
+    vector<tfdl::TFDataInt8 *> temp_input = FastllmLinearPrepareInputData(input, n, m, per_m, m_round, pool);
     
     // prepare temp output buffer
-    vector<tfdl::TFDataFloat *> temp_output;
-    for (int k_iter = 0; k_iter < k_round; k_iter++) {
-        int cur_k = min(per_k, k - (k_iter * per_k));
-        for (int m_iter = 0; m_iter < m_round; m_iter++) {
-            temp_output.push_back(new tfdl::TFDataFloat({n, cur_k}));
-        }
-    }
+    vector<tfdl::TFDataFloat *> temp_output = FastllmLinearPrepareOutputData<tfdl::TFDataFloat>(n, k, per_k, m_round, k_round);
 
     auto t1 = chrono::system_clock::now();
 
@@ -460,6 +511,174 @@ void FastllmTfaccLinearFloat32WFloat32D(float *input, float *output, float *weig
     auto t3 = chrono::system_clock::now();
 }
 
+void FastllmTfaccLinearFloat16WFloat32D(float *input, float *output, uint16_t *weight, float *bias, int n, int m, int k,
+                                        fastllm::ThreadPool *pool) {
+    // collect all available tfacc cores
+    std::vector<int> all_tfacc = ConfigureTFACC(fastllm::GetThreads(), TF_TFNN_GetChipNum());
+
+    int per_n = 8 * all_tfacc.size();
+    int n_round = (n - 1) / per_n + 1;
+    if (n_round > 1) {
+        for (int i = 0; i < n_round; i++) {
+            int cur_n = min(per_n, n - (i * per_n));
+            float *cur_input = input + i * per_n * m;
+            float *cur_output = output + i * per_n * k;
+            FastllmTfaccLinearFloat16WFloat32D(cur_input, cur_output, weight, bias, cur_n, m, k, pool);
+        }
+        return;
+    }
+
+    int per_k, per_m, k_round, m_round;
+    ConfigureKMRound(k, m, all_tfacc.size(), &per_k, &per_m, &k_round, &m_round);
+
+    // create space for blasop
+    FastllmTfaccInitBlasop();
+
+    // prepare weight
+    long long int weight_key = (long long int) weight;
+    if (FastllmTfaccWeightMap[weight_key].empty()) {
+        printf("[%d, %d] x [%d, %d] -> [%d, %d]\n", n, m, k, m, n, k);
+        printf("prepare weight, n_round: %d, m_round: %d, k_round: %d per_m: %d, per_k: %d\n", n_round, m_round, k_round, per_m, per_k);
+
+        vector<future<void>> futures;
+        for (int k_iter = 0; k_iter < k_round; k_iter++) {
+            int cur_k = min(per_k, k - k_iter * per_k);
+            for (int m_iter = 0; m_iter < m_round; m_iter++) {
+                int cur_m = min(per_m, m - m_iter * per_m);
+
+                // create weight for tfacc
+                auto real_space = new uint16_t[cur_k * cur_m];
+                auto cur_weight = new tfdl::TFDataFloat16({cur_k, cur_m}, real_space);
+
+                FastllmTfaccWeightRealSpace[weight_key].push_back((void *) real_space);
+                FastllmTfaccWeightMap[weight_key].push_back(cur_weight);
+
+                futures.push_back(pool->Submit([](uint16_t *dst, uint16_t *src, int len, int round, int dst_stride, int src_stride){
+                    FastllmTfaccCopyStride<uint16_t>(dst, src, len, round, dst_stride, src_stride);
+                }, cur_weight->GetFloat16RawData(),
+                   weight + k_iter * per_k * m + m_iter * per_m,
+                   cur_m, cur_k, cur_m, m));
+            }
+        }
+        for (auto &one_future : futures) {
+            one_future.get();
+        }
+    }
+
+    // quantize input data
+    vector<tfdl::TFDataInt8 *> temp_input = FastllmLinearPrepareInputData(input, n, m, per_m, m_round, pool);
+
+    // prepare temp output buffer
+    vector<tfdl::TFDataFloat *> temp_output = FastllmLinearPrepareOutputData<tfdl::TFDataFloat>(n, k, per_k, m_round, k_round);
+
+    // run with tfacc
+    vector<future<void>> futures;
+    int i = 0;
+    for (int k_iter = 0; k_iter < k_round; k_iter++) {
+        for (int m_iter = 0; m_iter < m_round; m_iter++) {
+            tfdl::TFDataInt8 *cur_input = temp_input[m_iter];
+            tfdl::TFDataFloat *cur_output = temp_output[i];
+            tfdl::TFDataFloat16 *cur_weight = (tfdl::TFDataFloat16 *) FastllmTfaccWeightMap[weight_key][i];
+            int cur_core = all_tfacc[i % all_tfacc.size()];
+            auto cur_blasop = FastllmTfaccBlasopCache[cur_core];
+            futures.push_back(pool->Submit([](tfdl::TFDataInt8 *input, tfdl::TFDataFloat *output, 
+                                              tfdl::TFDataFloat16 *weight, tfdl::TFDataFloat *bias, int device, void *blasop) {
+                tfacc40t::InnerProduct(input, output, weight, bias, device, blasop);
+            }, cur_input, cur_output, cur_weight, nullptr, cur_core, cur_blasop));
+
+            i++;
+            if (i % all_tfacc.size() == 0) {
+                for (auto &one_future : futures) {
+                    one_future.get();
+                }
+                futures.clear();
+            }
+        }
+    }
+    for (auto &one_future : futures) {
+        one_future.get();
+    }
+    futures.clear();
+
+    // post process temp output
+    // 1.accumulate m direction
+    if (m_round > 1) {
+        for (int k_iter = 0; k_iter < k_round; k_iter++) {
+            int cur_k = min(per_k, k - (k_iter * per_k));
+            float *dst = temp_output[k_iter * m_round]->GetFloatRawData();
+            vector<float *> src;
+            for (int m_iter = 1; m_iter < m_round; m_iter++) {
+                src.push_back(temp_output[k_iter * m_round + m_iter]->GetFloatRawData());
+            }
+            int per_n = 64;
+            for (int n_iter = 0; n_iter < n; n_iter += per_n) {
+                int cur_n = min(per_n, n - n_iter);
+                futures.push_back(pool->Submit([](float *dst, vector<float *> src, int len, int shift){
+                    for (int i = 0; i < src.size(); i++) {
+                        FastllmTfaccAccumulateFloat32(src[i] + shift, dst + shift, dst + shift, len);
+                    }
+                }, dst, src, cur_n * cur_k, n_iter * cur_k));
+            }
+        }
+        for (auto &one_future : futures) {
+            one_future.get();
+        }
+        futures.clear();
+    }
+
+    // 2.copy k direction
+    for (int k_iter = 0; k_iter < k_round; k_iter++) {
+        int cur_k = min(per_k, k - (k_iter * per_k));
+        float *dst = output + k_iter * per_k;
+        float *src = temp_output[k_iter * m_round]->GetFloatRawData();
+        futures.push_back(pool->Submit(FastllmTfaccCopyStride<float>, dst, src, cur_k, n, k, cur_k));
+    }
+    for (auto &one_future : futures) {
+        one_future.get();
+    }
+    futures.clear();
+
+    // 3.add bias
+    if (bias) {
+        if (n == 1) {
+            FastllmTfaccAccumulateFloat32(bias, output, output, k);
+        } else {
+            int per = max((int) (n / all_tfacc.size()), 1);
+            for (int n_iter = 0; n_iter < n;) {
+                int cur_n = min(per, n - n_iter);
+
+                float *bias_walk = bias;
+                float *output_walk = output + n_iter * k;
+                futures.push_back(pool->Submit([](float *dst, float *src, int round, int len) {
+                    for (int i = 0; i < round; i++) {
+                        FastllmTfaccAccumulateFloat32(dst + i * len, src, dst + i * len, len);
+                    }
+                }, output_walk, bias_walk, cur_n, k));
+                n_iter += cur_n;
+            }
+            for (auto &one_future : futures) {
+                one_future.get();
+            }
+            futures.clear();
+        }
+    }
+
+    // clear temp data
+    for (auto in : temp_input) {
+        delete in;
+    }
+    temp_input.clear();
+
+    for (auto out : temp_output) {
+        delete out;
+    }
+    temp_output.clear();
+
+    for (int tfacc : all_tfacc) {
+        FastllmTfaccBlasopCache[tfacc]->Clear();
+    }
+}
+
 void FastllmTfaccLinearFloat16WFloat16D(uint16_t *input, uint16_t *output, uint16_t *weight, float *bias, int n, int m, int k,
                                         fastllm::ThreadPool *pool) {
 #ifdef __ARM_FEATURE_FP16_VECTOR_ARITHMETIC                                            
@@ -516,49 +735,10 @@ void FastllmTfaccLinearFloat16WFloat16D(uint16_t *input, uint16_t *output, uint1
     }
 
     // quantize input data
-    vector<tfdl::TFDataInt8 *> temp_input;
-    if (n == 1) {
-        for (int i = 0; i < m_round; i++) {
-            int cur_m = min(per_m, m - i * per_m);
-            tfdl::TFDataFloat16 origin = tfdl::TFDataFloat16({n, cur_m}, input + i * per_m);
-            temp_input.push_back(new tfdl::TFDataInt8(&origin));
-        }
-    } else {
-        auto input_tf = tfdl::TFDataFloat16({n, m}, input);
-        tfdl::PerChannelConfig perChannelConfig;
-        for (int i = 0; i < n; i++) {
-            int st = i * m;
-            int end = i * m + m;
-            float minValue = input_tf.GetMinValue(st, end), maxValue = input_tf.GetMaxValue(st, end);
-            perChannelConfig.configs.push_back(tfdl::QuantizationConfig(minValue, maxValue));
-        }
-        for (int i = 0; i < m_round; i++) {
-            int cur_m = min(per_m, m - (i * per_m));
-            temp_input.push_back(new tfdl::TFDataInt8(0, 0, {n, cur_m}));
-            temp_input.back()->SetPerChannelConfig(perChannelConfig);
-        }
-
-        // quantize input
-        vector<future<void>> futures;
-        for (int i = 0; i < m_round; i++) {
-            int cur_m = min(per_m, m - (i * per_m));
-            futures.push_back(pool->Submit([](uint8_t *dst, uint16_t *src, int len, int round, int dst_stride, int src_stride,tfdl::PerChannelConfig config){          
-                FastllmTfaccQuantization(dst, src, len, round, dst_stride, src_stride, config);
-            }, temp_input[i]->GetInt8RawData(), input + i * per_m, cur_m, n, cur_m, m, perChannelConfig));
-        }
-        for (auto &one_future : futures) {
-            one_future.get();
-        }
-    }
+    vector<tfdl::TFDataInt8 *> temp_input = FastllmLinearPrepareInputData(input, n, m, per_m, m_round, pool);
 
     // prepare temp output buffer
-    vector<tfdl::TFDataFloat16 *> temp_output;
-    for (int k_iter = 0; k_iter < k_round; k_iter++) {
-        int cur_k = min(per_k, k - (k_iter * per_k));
-        for (int m_iter = 0; m_iter < m_round; m_iter++) {
-            temp_output.push_back(new tfdl::TFDataFloat16({n, cur_k}));
-        }
-    }
+    vector<tfdl::TFDataFloat16 *> temp_output = FastllmLinearPrepareOutputData<tfdl::TFDataFloat16>(n, k, per_k, m_round, k_round);
 
     // run with tfacc
     vector<future<void>> futures;
@@ -741,49 +921,10 @@ void FastllmTfaccLinearUint8WFloat32D(float *input, float *output, uint8_t *weig
     }
 
     // quantize input data
-    vector<tfdl::TFDataInt8 *> temp_input;
-    if (n == 1) {
-        for (int i = 0; i < m_round; i++) {
-            int cur_m = min(per_m, m - (i * per_m));
-            tfdl::TFDataFloat origin = tfdl::TFDataFloat({n, cur_m}, input + i * per_m);
-            temp_input.push_back(new tfdl::TFDataInt8(&origin));
-        }
-    } else {
-        auto input_tf = tfdl::TFDataFloat({n, m}, input);
-        tfdl::PerChannelConfig perChannelConfig;
-        for (int i = 0; i < n; i++) {
-            int st = i * m;
-            int end = i * m + m;
-            float minValue = input_tf.GetMinValue(st, end), maxValue = input_tf.GetMaxValue(st, end);
-            perChannelConfig.configs.push_back(tfdl::QuantizationConfig(minValue, maxValue));
-        }
-        for (int i = 0; i < m_round; i++) {
-            int cur_m = min(per_m, m - (i * per_m));
-            temp_input.push_back(new tfdl::TFDataInt8(0, 0, {n, cur_m}));
-            temp_input.back()->SetPerChannelConfig(perChannelConfig);
-        }
-
-        // quantize input
-        vector<future<void>> futures;
-        for (int i = 0; i < m_round; i++) {
-            int cur_m = min(per_m, m - (i * per_m));
-            futures.push_back(pool->Submit([](uint8_t *dst, float *src, int len, int round, int dst_stride, int src_stride,tfdl::PerChannelConfig config){          
-                FastllmTfaccQuantization(dst, src, len, round, dst_stride, src_stride, config);
-            }, temp_input[i]->GetInt8RawData(), input + i * per_m, cur_m, n, cur_m, m, perChannelConfig));
-        }
-        for (auto &one_future : futures) {
-            one_future.get();
-        }
-    }
+    vector<tfdl::TFDataInt8 *> temp_input = FastllmLinearPrepareInputData(input, n, m, per_m, m_round, pool);
     
     // prepare temp output buffer
-    vector<tfdl::TFDataFloat *> temp_output;
-    for (int k_iter = 0; k_iter < k_round; k_iter++) {
-        int cur_k = min(per_k, k - (k_iter * per_k));
-        for (int m_iter = 0; m_iter < m_round; m_iter++) {
-            temp_output.push_back(new tfdl::TFDataFloat({n, cur_k}));
-        }
-    }
+    vector<tfdl::TFDataFloat *> temp_output = FastllmLinearPrepareOutputData<tfdl::TFDataFloat>(n, k, per_k, m_round, k_round);
 
     auto t1 = chrono::system_clock::now();
 
@@ -962,49 +1103,10 @@ void FastllmTfaccLinearUint8WFloat16D(uint16_t *input, uint16_t *output, uint8_t
     }
 
     // quantize input data
-    vector<tfdl::TFDataInt8 *> temp_input;
-    if (n == 1) {
-        for (int i = 0; i < m_round; i++) {
-            int cur_m = min(per_m, m - i * per_m);
-            tfdl::TFDataFloat16 origin = tfdl::TFDataFloat16({n, cur_m}, input + i * per_m);
-            temp_input.push_back(new tfdl::TFDataInt8(&origin));
-        }
-    } else {
-        auto input_tf = tfdl::TFDataFloat16({n, m}, input);
-        tfdl::PerChannelConfig perChannelConfig;
-        for (int i = 0; i < n; i++) {
-            int st = i * m;
-            int end = i * m + m;
-            float minValue = input_tf.GetMinValue(st, end), maxValue = input_tf.GetMaxValue(st, end);
-            perChannelConfig.configs.push_back(tfdl::QuantizationConfig(minValue, maxValue));
-        }
-        for (int i = 0; i < m_round; i++) {
-            int cur_m = min(per_m, m - (i * per_m));
-            temp_input.push_back(new tfdl::TFDataInt8(0, 0, {n, cur_m}));
-            temp_input.back()->SetPerChannelConfig(perChannelConfig);
-        }
-
-        // quantize input
-        vector<future<void>> futures;
-        for (int i = 0; i < m_round; i++) {
-            int cur_m = min(per_m, m - (i * per_m));
-            futures.push_back(pool->Submit([](uint8_t *dst, uint16_t *src, int len, int round, int dst_stride, int src_stride,tfdl::PerChannelConfig config){          
-                FastllmTfaccQuantization(dst, src, len, round, dst_stride, src_stride, config);
-            }, temp_input[i]->GetInt8RawData(), input + i * per_m, cur_m, n, cur_m, m, perChannelConfig));
-        }
-        for (auto &one_future : futures) {
-            one_future.get();
-        }
-    }
+    vector<tfdl::TFDataInt8 *> temp_input = FastllmLinearPrepareInputData(input, n, m, per_m, m_round, pool);
 
     // prepare temp output buffer
-    vector<tfdl::TFDataFloat16 *> temp_output;
-    for (int k_iter = 0; k_iter < k_round; k_iter++) {
-        int cur_k = min(per_k, k - (k_iter * per_k));
-        for (int m_iter = 0; m_iter < m_round; m_iter++) {
-            temp_output.push_back(new tfdl::TFDataFloat16({n, cur_k}));
-        }
-    }
+    vector<tfdl::TFDataFloat16 *> temp_output = FastllmLinearPrepareOutputData<tfdl::TFDataFloat16>(n, k, per_k, m_round, k_round);
 
     // run with tfacc
     vector<future<void>> futures;

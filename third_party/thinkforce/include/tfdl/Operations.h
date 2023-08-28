@@ -121,6 +121,15 @@ namespace tfacc40t {
     void InnerProduct(tfdl::TFDataFloat *input, tfdl::TFDataFloat *output, tfdl::TFDataInt8 *weight, tfdl::TFDataFloat *bias,
                       int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
 
+    void InnerProduct(tfdl::TFDataInt8 *input, tfdl::TFDataFloat *output, tfdl::TFDataFloat16 *weight, tfdl::TFDataFloat *bias,
+                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
+
+    void InnerProduct(tfdl::TFDataFloat16 *input, tfdl::TFDataFloat *output, tfdl::TFDataFloat16 *weight, tfdl::TFDataFloat *bias,
+                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
+
+    void InnerProduct(tfdl::TFDataFloat16 *input, tfdl::TFDataFloat *output, tfdl::TFDataInt8 *weight, tfdl::TFDataFloat *bias,
+                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
+
 #ifdef __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
     void InnerProduct(tfdl::TFDataInt8 *input, tfdl::TFDataFloat16 *output, tfdl::TFDataInt8 *weight, tfdl::TFDataFloat *bias,
                       int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
