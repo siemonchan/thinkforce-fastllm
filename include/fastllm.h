@@ -313,7 +313,8 @@ namespace fastllm {
         enum TokenizerType {
             BPE = 0,
             NORMAL = 1,
-            QWEN = 2
+            QWEN = 2,
+            GPT2 = 3
         };
 
         struct TrieNode {
@@ -476,6 +477,8 @@ namespace fastllm {
     void LlamaRotatePosition2D(Data &input, const Data &positionIds, Data &sinData, Data &cosData, int rotaryDim); // 2D position for llama
 
     void RepeatPenalty(Data &input, const Data &penalty); // 惩罚，input[i] = input[i] < 0 ? input[i] * penalty[i] : input[i] / penalty[i];
+
+    void RepeatKV(Data &input, int num_key_value_groups);
 
     void ApplyLognAttn(Data &input, const Data &lognAttn, const Data &positionIds);
 

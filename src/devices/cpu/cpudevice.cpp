@@ -47,6 +47,7 @@ namespace fastllm {
         this->ops["NearlyRotatePosition2D"] = (BaseOperator*)(new CpuNearlyRotatePosition2DOp());
         this->ops["LlamaRotatePosition2D"] = (BaseOperator*)(new CpuLlamaRotatePosition2DOp());
         this->ops["RepeatPenalty"] = (BaseOperator*)(new CpuRepeatPenaltyOp());
+        this->ops["RepeatKV"] = (BaseOperator*)(new CpuRepeatKVOp());
         this->ops["ApplyLognAttn"] = (BaseOperator*)(new CpuApplyLognAttnOp());
 
         this->ops["SplitBatch"] = (BaseOperator*)(new CpuSplitBatchOp());
@@ -2690,6 +2691,57 @@ namespace fastllm {
         for (int i = 0; i < len; i++) {
             inputData[i] = inputData[i] < 0 ? inputData[i] * penaltyData[i] : inputData[i] / penaltyData[i];
         }
+    }
+
+    void CpuRepeatKVOp::Run(const std::string &opType, const DataDict &datas, 
+                            const FloatDict &floatParams, const IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        int num_key_value_groups = intParams.find("num_key_value_groups")->second;
+
+        auto origin = new uint8_t[input.GetBytes()];
+        memcpy(origin, input.cpuData, input.GetBytes());
+
+        std::vector<int> dims = input.dims;
+        int batch = dims[0];
+        int channel = dims[1];
+        int inner = input.Count(2);
+
+        dims[1] *= num_key_value_groups;
+        input.Resize(dims);
+        input.Allocate();
+
+        if (input.dataType == DataType::FLOAT32) {
+            float *inputData = (float *) origin;
+            float *outputData = (float *) input.cpuData;
+
+            for (int b = 0; b < batch; b++) {
+                for (int c = 0; c < channel; c++) {
+                    for (int i = 0; i < num_key_value_groups; i++) {
+                        memcpy(outputData + c * num_key_value_groups * inner + i * inner, inputData + c * inner, inner * sizeof(float));
+                    }
+                }
+                
+                inputData += channel * inner;
+                outputData += num_key_value_groups * channel * inner;
+            }
+        } else if (input.dataType == DataType::FLOAT16) {
+            uint16_t *inputData = (uint16_t *) origin;
+            uint16_t *outputData = (uint16_t *) input.cpuData;
+
+            for (int b = 0; b < batch; b++) {
+                for (int c = 0; c < channel; c++) {
+                    for (int i = 0; i < num_key_value_groups; i++) {
+                        memcpy(outputData + c * num_key_value_groups * inner + i * inner, inputData + c * inner, inner * sizeof(uint16_t));
+                    }
+                }
+                
+                inputData += channel * inner;
+                outputData += num_key_value_groups * channel * inner;
+            }
+        } else {
+            ErrorInFastLLM("Unsupport RepeatKV data type.\n");
+        }
+        delete[] origin;
     }
 
     void CpuApplyLognAttnOp::Run(const std::string &opType, const fastllm::DataDict &datas,

@@ -810,10 +810,15 @@ namespace fastllm {
     }
 
     Data Tokenizer::Encode(const std::string &ori) {
-        if (this->type == TokenizerType::BPE) {
-            std::string blank = "";
+        if (this->type == TokenizerType::BPE || this->type == Tokenizer::GPT2) {
+            std::string blank = "", s = "";
+            if (this->type == Tokenizer::BPE) {
             blank += 226, blank += 150, blank += 129;
-            std::string s = blank;
+                s = blank;
+            } else if (this->type == Tokenizer::GPT2) {
+                blank += 196, blank += 160;
+            }
+            
             if (15 < ori.size() && ori.substr(0, 15) == "<FLM_FIX_TOKEN_") {
                 s = "";
             }
@@ -1047,6 +1052,51 @@ namespace fastllm {
 
     std::string Tokenizer::DecodeTokens(const std::vector<int> &tokens) {
         std::string ret = "";
+        if (this->type == GPT2) {
+            for (int i = 0; i < tokens.size(); i++) {
+                std::string s = tokenToStringDict[tokens[i]];
+                if (s.size() == 6 && s.substr(0, 3) == "<0x" && s.back() == '>') {
+                    int c = 0;
+                    for (int i = 3; i < 5; i++) {
+                        c *= 16;
+                        if (s[i] >= '0' && s[i] <= '9') {
+                            c += (s[i] - '0');
+                        } else {
+                            c += (s[i] - 'A' + 10);
+                        }
+                    }
+
+                    s = " ";
+                    s[0] = c;
+                }
+                if (tokens[i] == 202) {
+                    ret += "\t";
+                } else if (tokens[i] == 203) {
+                    ret += "\n";
+                } else if (tokens[i] == 284) {
+                    ret += "\n    ";
+                } else if (tokens[i] == 355) {
+                    ret += "\n\t\t";
+                } else if (tokens[i] == 357) {
+                    ret += "\n\t";
+                } else if (tokens[i] == 478) {
+                    ret += "\n\n";
+                } else if (tokens[i] == 603) {
+                    ret += "\n\t\t\t";
+                } else {
+                    ret += s;
+                }
+            }
+
+            std::string blank = "";
+            blank += 196, blank += 160;
+            while (true) {
+                std::string::size_type pos(0);
+                if ((pos = ret.find(blank)) != std::string::npos)
+                    ret.replace(pos, blank.length(), " ");
+                else break;
+            }
+        } else {
         for (int i = 0; i < tokens.size(); i++) {
             std::string s = tokenToStringDict[tokens[i]];
             if (s.size() == 6 && s.substr(0, 3) == "<0x" && s.back() == '>') {
@@ -1085,7 +1135,7 @@ namespace fastllm {
             int space_num = atoi(ret.substr(8, ret.size() - 10).c_str());
             return std::string(space_num, ' ');
         }
-
+        }
         return ret;
     }
 
@@ -1771,6 +1821,10 @@ namespace fastllm {
         curExecutor->Run("RepeatPenalty", {
                 {"input", &input}, {"penalty", (Data*)&penalty}
         }, {}, {});
+    }
+
+    void RepeatKV(Data &input, int num_key_value_groups) {
+        curExecutor->Run("RepeatKV", {{"input", &input}}, {}, {{"num_key_value_groups", num_key_value_groups}});
     }
 
     void ApplyLognAttn(Data &input, const Data &lognAttn, const Data &positionIds) {

@@ -98,6 +98,8 @@ def tofile(exportPath,
         if modelInfo["chat_format"] == "chatml":
             modelInfo["im_end_id"] = tokenizer.im_end_id
             modelInfo["im_start_id"] = tokenizer.im_start_id
+    if modelInfo["model_type"] == "llama" and modelInfo["architectures"][0] == "DeciLlamaForCausalLM":
+        modelInfo["model_type"] = "decicoder"
 
     modelInfo["tokenizer_use_score"] = "1" # 分词带分数
 
