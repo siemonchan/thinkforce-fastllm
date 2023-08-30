@@ -329,6 +329,9 @@ namespace fastllm {
     }
 
     void Data::Reshape(const std::vector<int> &dims) {
+        if (this->dims == dims) {
+            return;
+        }
         std::vector <int> outputDims = dims;
         uint64_t old = 1;
         for (int i : this->dims) {
@@ -1661,6 +1664,14 @@ namespace fastllm {
         } else {
             ErrorInFastLLM("ToDataDevice: Unsupport data type.\n");
         }
+    }
+
+    void Attention(const Data &q, const Data &k, const Data &v, const Data &mask, Data &output,
+                   int group, float scale, int attentionType) {
+        curExecutor->Run("Attention", {
+                {"q", (Data*)&q}, {"k", (Data*)&k}, {"v", (Data*)&v},
+                {"mask", (Data*)&mask}, {"output", (Data*)&output}
+        }, {{"scale", scale}}, {{"group", group}});
     }
 
     void Embedding(const Data &input, Data &weight, Data &output) {

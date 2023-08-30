@@ -111,7 +111,10 @@ add_custom_command(
 add_executable(benchmark example/benchmark/benchmark.cpp)
 target_link_libraries(benchmark fastllm)
 
-add_library(fastllm_tools SHARED ${FASTLLM_CXX_SOURCES} ${FASTLLM_CUDA_SOURCES} ${FASTLLM_TFACC_SOURCES} tools/src/pytools.cpp)
+add_executable(apiserver example/apiserver/apiserver.cpp example/apiserver/json11.cpp)
+target_link_libraries(apiserver fastllm)
+
+add_library(fastllm_tools SHARED ${FASTLLM_CXX_SOURCES} ${FASTLLM_CUDA_SOURCES} tools/src/pytools.cpp)
 target_link_libraries(fastllm_tools PUBLIC ${FASTLLM_LINKED_LIBS})
 
 if (${CMAKE_HOST_WIN32})
