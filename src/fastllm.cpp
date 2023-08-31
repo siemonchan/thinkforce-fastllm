@@ -1072,21 +1072,38 @@ namespace fastllm {
                     s = " ";
                     s[0] = c;
                 }
-                if (tokens[i] == 202) {
+                switch (tokens[i]) {
+                    case 202:
                     ret += "\t";
-                } else if (tokens[i] == 203) {
+                        break;
+                    case 203:
                     ret += "\n";
-                } else if (tokens[i] == 284) {
+                        break;
+                    case 284:
                     ret += "\n    ";
-                } else if (tokens[i] == 355) {
+                        break;
+                    case 291:
+                        ret += "\n       ";
+                        break;
+                    case 334:
+                        ret += "\n ";
+                        break;
+                    case 355:
                     ret += "\n\t\t";
-                } else if (tokens[i] == 357) {
+                        break;
+                    case 357:
                     ret += "\n\t";
-                } else if (tokens[i] == 478) {
+                        break;
+                    case 397:
+                        ret += "\n     ";
+                        break;
+                    case 478:
                     ret += "\n\n";
-                } else if (tokens[i] == 603) {
+                        break;
+                    case 603:
                     ret += "\n\t\t\t";
-                } else {
+                        break;
+                    default:
                     ret += s;
                 }
             }
