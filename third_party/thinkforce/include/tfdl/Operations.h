@@ -105,44 +105,9 @@ namespace tfacc40t {
     void Convolution(tfdl::TFDataFloat *input, tfdl::TFDataFloat *output, tfdl::TFDataFloat *weight, tfdl::TFDataFloat *bias,
                      int deviceId, int outputChannels, int group, int kernelH, int kernelW, int strideH, int strideW,
                      int padHBegin, int padHEnd, int padWBegin, int padWEnd, int dilationH, int dilationW, bool relu);
-    
-    void InnerProduct(tfdl::TFDataInt8 *input, tfdl::TFDataInt8 *output, tfdl::TFDataInt8 *weight, tfdl::TFDataInt8 *bias,
-                      int deviceId);
 
-    void InnerProduct(tfdl::TFDataInt8 *input, tfdl::TFDataFloat *output, tfdl::TFDataInt8 *weight, tfdl::TFDataFloat *bias,
-                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
-
-    void InnerProduct(tfdl::TFDataInt8 *input, tfdl::TFDataFloat *output, tfdl::TFDataFloat *weight, tfdl::TFDataFloat *bias,
-                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
-
-    void InnerProduct(tfdl::TFDataFloat *input, tfdl::TFDataFloat *output, tfdl::TFDataFloat *weight, tfdl::TFDataFloat *bias,
-                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
-
-    void InnerProduct(tfdl::TFDataFloat *input, tfdl::TFDataFloat *output, tfdl::TFDataInt8 *weight, tfdl::TFDataFloat *bias,
-                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
-
-    void InnerProduct(tfdl::TFDataInt8 *input, tfdl::TFDataFloat *output, tfdl::TFDataFloat16 *weight, tfdl::TFDataFloat *bias,
-                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
-
-    void InnerProduct(tfdl::TFDataFloat16 *input, tfdl::TFDataFloat *output, tfdl::TFDataFloat16 *weight, tfdl::TFDataFloat *bias,
-                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
-
-    void InnerProduct(tfdl::TFDataFloat16 *input, tfdl::TFDataFloat *output, tfdl::TFDataInt8 *weight, tfdl::TFDataFloat *bias,
-                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
-
-#ifdef __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
-    void InnerProduct(tfdl::TFDataInt8 *input, tfdl::TFDataFloat16 *output, tfdl::TFDataInt8 *weight, tfdl::TFDataFloat *bias,
-                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
-
-    void InnerProduct(tfdl::TFDataInt8 *input, tfdl::TFDataFloat16 *output, tfdl::TFDataFloat16 *weight, tfdl::TFDataFloat *bias,
-                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
-
-    void InnerProduct(tfdl::TFDataFloat16 *input, tfdl::TFDataFloat16 *output, tfdl::TFDataFloat16 *weight, tfdl::TFDataFloat *bias,
-                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
-
-    void InnerProduct(tfdl::TFDataFloat *input, tfdl::TFDataFloat16 *output, tfdl::TFDataInt8 *weight, tfdl::TFDataFloat *bias,
-                      int deviceId, void *blasopCache = nullptr, long long int weight_key = 0);
-#endif
+    void InnerProduct(tfdl::TFData *input, tfdl::TFData *output, tfdl::TFData *weight, tfdl::TFData *bias,
+                      int deviceId, void *blasopCache = nullptr);
 
     void Pooling(tfdl::TFDataInt8 *input, tfdl::TFDataInt8 *output, int deviceId, int kernel, int stride, int pad, string type);
 
