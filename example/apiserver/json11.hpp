@@ -48,6 +48,9 @@
  * THE SOFTWARE.
  */
 
+#ifndef JSON11_HPP
+#define JSON11_HPP
+
 #pragma once
 
 #include <string>
@@ -231,3 +234,4 @@ namespace json11 {
 
 } // namespace json11
 
+#endif // JSON11_HPP
