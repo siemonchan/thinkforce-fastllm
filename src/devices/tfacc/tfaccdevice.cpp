@@ -43,6 +43,7 @@ namespace fastllm {
         
         this->deviceType = "tfacc";
         this->ops["Linear"] = (BaseOperator *) (new TfaccLinearOp());
+        this->ops["Conv2d"] = (BaseOperator *) (new TfaccConv2dOp());
 
         // disable all tfacc cache
         int numaMemMask = numa_get_membind_compat().n[0];
@@ -421,5 +422,135 @@ namespace fastllm {
         for (int i = 0; i < futures.size(); i++) {
             futures[i].get();
         }
+    }
+
+    bool TfaccConv2dOp::CanRun(const std::string &opType, const DataDict &datas, 
+                               const FloatDict &floatParams, const IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+        Data &weight = *(datas.find("weight")->second);
+        int stride = intParams.find("stride")->second;
+        int padding = intParams.find("padding")->second;
+        int dilation = intParams.find("dilation")->second;
+        int kernel = weight.dims[2];
+        int inputChannel = input.dims[1];
+        int inputHeight = input.dims[2];
+        int inputWidth = input.dims[3];
+
+        int batch = input.dims[0];
+        int outputChannel = weight.dims[0];
+        int outputHeight = ((inputHeight + padding * 2) - (dilation * (kernel - 1) + 1)) / stride + 1;
+        int outputWidth = ((inputWidth + padding * 2) - (dilation * (kernel - 1) + 1)) / stride + 1;
+
+        int threadNum = GetThreads();
+        if (inputHeight * inputWidth / 256 * outputChannel * 2 > 64000) {
+            return false;
+        }
+        if (inputHeight * inputWidth == 1) {
+            return false;
+        }
+        if (outputHeight * outputWidth == 1) {
+            return false;
+        }
+        if (kernel > 7) {
+            return false;
+        }
+        if (dilation != 1) {
+            return false;
+        }
+        if (padding >= kernel) {
+            return false;
+        }
+        return true;
+    }
+
+    void TfaccConv2dOp::Reshape(const std::string &opType, const DataDict &datas, 
+                                const FloatDict &floatParams, const IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+        Data &weight = *(datas.find("weight")->second);
+
+        AssertInFastLLM(weight.dims[2] == weight.dims[3], "Fastllm dosen`t support kernel_h != kernel_w");
+
+        int stride = intParams.find("stride")->second;
+        int padding = intParams.find("padding")->second;
+        int dilation = intParams.find("dilation")->second;
+        int kernel = weight.dims[2];
+        int inputChannel = input.dims[1];
+        int inputHeight = input.dims[2];
+        int inputWidth = input.dims[3];
+
+        int batch = input.dims[0];
+        int outputChannel = weight.dims[0];
+        int outputHeight = ((inputHeight + padding * 2) - (dilation * (kernel - 1) + 1)) / stride + 1;
+        int outputWidth = ((inputWidth + padding * 2) - (dilation * (kernel - 1) + 1)) / stride + 1;
+
+        output.dataType = input.dataType;
+        output.Resize({batch, outputChannel, outputHeight, outputWidth});
+    }
+
+    void TfaccConv2dOp::Run(const std::string &opType, const DataDict &datas, 
+                            const FloatDict &floatParams, const IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+        Data &weight = *(datas.find("weight")->second);
+        Data &bias = *(datas.find("bias")->second);
+
+        int kernel = weight.dims[2];
+        int stride = intParams.find("stride")->second;
+        int padding = intParams.find("padding")->second;
+        int dilation = intParams.find("dilation")->second;
+        int group = intParams.find("group")->second;
+
+        int batch = input.dims[0];
+        int inputChannel = input.dims[1];
+        int inputHeight = input.dims[2];
+        int inputWidth = input.dims[3];
+        int outputChannel = output.dims[1];
+        int outputHeight = output.dims[2];
+        int outputWidth = output.dims[3];
+
+        output.Allocate();
+        auto pool = GetPool();
+        std::vector<std::future<void> > futures;
+        int threadNum = GetThreads();
+
+        if (input.dataType == DataType::FLOAT32 && output.dataType == DataType::FLOAT32) {
+            float *inputData = (float *) input.cpuData;
+            float *outputData = (float *) output.cpuData;
+            float *biasData = bias.dims.size() == 0 ? nullptr : (float *) bias.cpuData;
+            if (weight.dataType == DataType::FLOAT32) {
+                // todo
+            } else if (weight.dataType == DataType::INT8) {
+                uint8_t *weightData = (uint8_t *) weight.cpuData;
+                AssertInFastLLM(weight.tfWeightConfig.axis == 0, 
+                                "Think Force`s TFACC only support per channel config on axis 0.");
+                AssertInFastLLM(weight.tfWeightConfig.configs.size() == outputChannel, 
+                                "Conv2d`s weight config size doesn`t match the requirement of Think Force`s TFACC");
+                auto pool = GetPool();
+                FastllmTfaccConv2DUint8WFloat32D(inputData, outputData, weightData, biasData, batch,
+                    inputChannel, inputHeight, inputWidth, outputChannel, outputHeight, outputWidth,
+                    kernel, stride, padding, dilation, group, weight.tfWeightConfig, pool);
+            }
+        } else {
+            // todo
+        }
+    }
+
+    long long int TfaccConv2dOp::Ops(const std::string &opType, const DataDict &datas, 
+                                     const FloatDict &floatParams, const IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+        Data &weight = *(datas.find("weight")->second);
+
+        int kernel = weight.dims[2];
+        int group = intParams.find("group")->second;
+
+        int batch = input.dims[0];
+        int inputChannel = input.dims[1];
+        int outputChannel = output.dims[1];
+        int outputHeight = output.dims[2];
+        int outputWidth = output.dims[3];
+        return (long long int) batch * outputChannel * inputChannel * outputHeight * outputWidth * kernel * kernel / group;
     }
 }

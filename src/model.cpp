@@ -99,4 +99,12 @@ namespace fastllm {
         basellm *model = CreateModelWithType(modelType);
         return std::unique_ptr<fastllm::basellm> (model);
     }
+
+    std::unique_ptr<StableDiffusionModel> CreateStableDiffusionModelFromFile(const std::string &fileNmae) {
+        StableDiffusionModel *model = new StableDiffusionModel();
+        model->weight.LoadFromFile(fileNmae);
+        model->weight.tokenizer.type = Tokenizer::TokenizerType::CLIP;
+        model->scheduler.Init();
+        return std::unique_ptr<StableDiffusionModel>(model);
+    }
 }

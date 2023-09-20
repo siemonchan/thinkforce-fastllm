@@ -1229,3 +1229,135 @@ void FastllmTfaccLinearUint8WFloat16D(uint16_t *input, uint16_t *output, uint8_t
     ErrorInFastLLM("Uint8 Weight Float16 Data Linear not supported.\n");
 #endif
 }
+
+void FastllmTfaccConv2DUint8WFloat32D(float *input, float *output, uint8_t *weight, float* bias, int batch, 
+                                      int inputChannel, int inputHeight, int inputWidth, 
+                                      int outputChannel, int outputHeight, int outputWidth, 
+                                      int kernel, int stride, int padding, int dilation, int group,
+                                      tfdl::PerChannelConfig tfWeightConfig, fastllm::ThreadPool *pool) {
+    // collect all available tfacc cores
+    std::vector<int> all_tfacc = ConfigureTFACC(fastllm::GetThreads(), TF_TFNN_GetChipNum());
+
+    if (batch > all_tfacc.size()) {
+        while (batch) {
+            int cur_batch = std::min((int) all_tfacc.size(), batch);
+            input += cur_batch * inputChannel * inputHeight * inputWidth;
+            output += cur_batch * outputChannel * inputHeight * inputWidth;
+            FastllmTfaccConv2DUint8WFloat32D(input, output, weight, bias, cur_batch,
+                                             inputChannel, inputHeight, inputWidth,
+                                             outputChannel, outputHeight, outputWidth,
+                                             kernel, stride, padding, dilation, group,
+                                             tfWeightConfig, pool);
+            batch -= cur_batch;
+        }
+        return;
+    }
+
+    int per_oc = outputChannel / (all_tfacc.size() / batch);
+    int oc_round;
+    if (per_oc == 0) {
+        per_oc = outputChannel;
+        oc_round = 1;
+    } else {
+        oc_round = outputChannel / per_oc;
+    }
+    
+    // create space for blasop
+    FastllmTfaccInitBlasop();
+
+    // prepare weight
+    long long int weight_key = (long long int) weight;
+    if (FastllmTfaccWeightMap[weight_key].empty()) {
+        printf("conv2d [%d, %d, %d, %d] * [%d, %d, %d, %d], s %d , p %d, -> [%d, %d, %d, %d]\n",
+            batch, inputChannel, inputHeight, inputWidth, 
+            outputChannel, inputChannel, kernel, kernel, stride, padding,
+            batch, outputChannel, outputHeight, outputWidth);
+
+        for (int i = 0; i < batch; i++) {
+            for (int oc_iter = 0; oc_iter < oc_round; oc_iter++) {
+                int cur_oc = min(per_oc, outputChannel - oc_iter * per_oc);
+
+                uint8_t *cur_weight = weight + (oc_iter * per_oc) * (inputChannel / group) * kernel * kernel;
+                FastllmTfaccWeightMap[weight_key].push_back(new tfdl::TFDataInt8(0.f, 0.f, {cur_oc, inputChannel / group, kernel, kernel}, cur_weight));
+                FastllmTfaccWeightMap[weight_key].back()->SetPerChannelConfig(tfWeightConfig.extract(oc_iter * per_oc, oc_iter * per_oc + cur_oc));
+            }
+        }
+    }
+
+    // prepare bias
+    std::vector<tfdl::TFDataFloat *> temp_bias;
+    for (int oc_iter = 0; oc_iter < oc_round; oc_iter++) {
+        int cur_oc = min(per_oc, outputChannel - oc_iter * per_oc);
+
+        float *cur_bias = bias + oc_iter * per_oc;
+        temp_bias.push_back(new tfdl::TFDataFloat({1, cur_oc}, cur_bias));
+    }
+
+    // prepare input
+    std::vector<tfdl::TFDataInt8 *> temp_input;
+    for (int i = 0; i < batch; i++) {
+        tfdl::TFDataFloat origin = tfdl::TFDataFloat({1, inputChannel, inputHeight, inputWidth}, 
+                                                     input + i * inputChannel * inputHeight * inputWidth);
+        temp_input.push_back(new tfdl::TFDataInt8(&origin));
+    }
+    
+    // prepare output
+    std::vector<tfdl::TFDataFloat *> temp_output;
+    for (int i = 0; i < batch; i++) {
+        for (int oc_iter = 0; oc_iter < oc_round; oc_iter++) {
+            int cur_oc = min(per_oc, outputChannel - oc_iter * per_oc);
+
+            float *cur_output = output + (i * outputChannel + oc_iter * per_oc) * outputHeight * outputWidth;
+            temp_output.push_back(new tfdl::TFDataFloat({1, cur_oc, outputHeight, outputWidth}, cur_output));
+        }
+    }
+
+    // run with tfacc
+    vector<future<void>> futures;
+    for (int i = 0; i < batch; i++) {
+        for (int oc_iter = 0; oc_iter < oc_round; oc_iter++) {
+            int cur_oc = min(per_oc, outputChannel - oc_iter * per_oc);
+
+            tfdl::TFDataInt8 *cur_input = temp_input[i];
+            tfdl::TFDataFloat *cur_output = temp_output[i * oc_round + oc_iter];
+            tfdl::TFDataInt8 *cur_weight = (tfdl::TFDataInt8 *) FastllmTfaccWeightMap[weight_key][i * oc_round + oc_iter];
+            tfdl::TFDataFloat *cur_bias = temp_bias[oc_iter];
+            int cur_core = all_tfacc[(i * oc_round + oc_iter) % all_tfacc.size()];
+            auto cur_blasop = FastllmTfaccBlasopCache[cur_core];
+            futures.push_back(pool->Submit(tfacc40t::Convolution, cur_input, cur_output, cur_weight, cur_bias,
+                                           cur_oc, kernel, kernel, stride, stride, group, padding, padding, padding, padding,
+                                           dilation, dilation, false, cur_core, cur_blasop));
+            
+            if ((i * oc_round + oc_iter + 1) % all_tfacc.size() == 0) {
+                for (auto &one_future : futures) {
+                    one_future.get();
+                }
+                futures.clear();
+            }
+        }
+    }
+    for (auto &one_future : futures) {
+        one_future.get();
+    }
+    futures.clear();
+
+    // clear temp data
+    for (auto b : temp_bias) {
+        delete b;
+    }
+    temp_bias.clear();
+
+    for (auto in : temp_input) {
+        delete in;
+    }
+    temp_input.clear();
+
+    for (auto out : temp_output) {
+        delete out;
+    }
+    temp_output.clear();
+
+    for (int tfacc : all_tfacc) {
+        FastllmTfaccBlasopCache[tfacc]->Clear();
+    }
+}

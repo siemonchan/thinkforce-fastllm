@@ -9,6 +9,7 @@
 
 #include <cfloat>
 #include <cmath>
+#include <random>
 
 #ifdef __aarch64__
 #include <arm_neon.h>
@@ -25,8 +26,11 @@ namespace fastllm {
         this->ops["Attention"] = (BaseOperator*)(new CpuAttention());
         this->ops["Embedding"] = (BaseOperator*)(new CpuEmbedding());
         this->ops["LayerNorm"] = (BaseOperator*)(new CpuLayerNormOp());
+        this->ops["GroupNorm"] = (BaseOperator*)(new CpuGroupNormOp());
         this->ops["RMSNorm"] = (BaseOperator*)(new CpuRMSNormOp());
         this->ops["Linear"] = (BaseOperator*)(new CpuLinearOp());
+        this->ops["Conv2d"] = (BaseOperator*)(new CpuConv2dOp());
+        this->ops["Interpolate"] = (BaseOperator*)(new CpuInterpolateOp());
         this->ops["Split"] = (BaseOperator*)(new CpuSplitOp());
         this->ops["Cat"] = (BaseOperator*)(new CpuCatOp());
         this->ops["CatDirect"] = (BaseOperator*)(new CpuCatDirectOp());
@@ -38,6 +42,7 @@ namespace fastllm {
         this->ops["Swiglu"] = (BaseOperator*)(new CpuSwigluOp());
         this->ops["Mul"] = (BaseOperator*)(new CpuMulOp());
         this->ops["MulTo"] = (BaseOperator*)(new CpuMulToOp());
+        this->ops["Scaling"] = (BaseOperator*)(new CpuScalingOp());
         this->ops["AddTo"] = (BaseOperator*)(new CpuAddToOp());
         this->ops["AttentionMask"] = (BaseOperator*)(new CpuAttentionMaskOp());
         this->ops["AlibiMask"] = (BaseOperator*)(new CpuAlibiMaskOp());
@@ -50,6 +55,11 @@ namespace fastllm {
         this->ops["RepeatPenalty"] = (BaseOperator*)(new CpuRepeatPenaltyOp());
         this->ops["RepeatKV"] = (BaseOperator*)(new CpuRepeatKVOp());
         this->ops["ApplyLognAttn"] = (BaseOperator*)(new CpuApplyLognAttnOp());
+        this->ops["Linspace"] = (BaseOperator*)(new CpuLinspaceOp());
+        this->ops["Pow"] = (BaseOperator*)(new CpuPowOp());
+        this->ops["CumProd"] = (BaseOperator*)(new CpuCumProdOp());
+        this->ops["Unique"] = (BaseOperator*)(new CpuUniqueOp());
+        this->ops["Randn"] = (BaseOperator*)(new CpuRandnOp());
 
         this->ops["SplitBatch"] = (BaseOperator*)(new CpuSplitBatchOp());
         this->ops["CatBatch"] = (BaseOperator*)(new CpuCatBatchOp());
@@ -163,6 +173,8 @@ namespace fastllm {
             }
         }
     } fp16tofp32;
+
+    void Transpose(float *pDst, float *pSrc, int dstStride, int srcStride, int n, int m);
 
     void CpuToFloat16::Run(const std::string &opType, const fastllm::DataDict &datas,
                            const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
@@ -510,6 +522,67 @@ namespace fastllm {
             delete[] mean;
             delete[] var;
         }
+    }
+
+    void CpuGroupNormOp::Run(const std::string &opType, const DataDict &datas, 
+                             const FloatDict &floatParams, const IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+        Data &gamma = *(datas.find("gamma")->second);
+        Data &beta = *(datas.find("beta")->second);
+        int group = intParams.find("group")->second;
+
+        output.Allocate();
+        int batch = input.dims[0];
+        int channel = input.dims[1];
+        int perChannel = channel / group;
+        int spatial = input.dims[2] * input.dims[3];
+
+        float *inputData = (float *) input.cpuData;
+        float *outputData = (float *) output.cpuData;
+        float *gammaData = (float *) gamma.cpuData;
+        float *betaData = (float *) beta.cpuData;
+        float *mean = new float[group], *var = new float[group];
+
+        for (int b = 0; b < batch; b++) {
+            std::fill(mean, mean + group, 0.f);
+            std::fill(var, var + group, 0.f);
+
+            float *inputWalk = inputData;
+            for (int g = 0; g < group; g++) {
+                for (int j = 0; j < perChannel * spatial; j++) {
+                    mean[g] += *inputWalk++;
+                }
+                mean[g] /= (float) (perChannel * spatial);
+            }
+            inputWalk = inputData;
+            for (int g = 0; g < group; g++) {
+                for (int j = 0; j < perChannel * spatial; j++) {
+                    float x = (*inputWalk++) - mean[g];
+                    var[g] += x * x;
+                }
+                var[g] = sqrtf(var[g] / (perChannel * spatial) + 1e-5);
+            }
+
+            inputWalk = inputData;
+            float *outputWalk = outputData;
+
+            for (int g = 0; g < group; g++) {
+                for (int c = 0; c < perChannel; c++) {
+                    int curChannel = g * perChannel + c;
+                    float gamma = gammaData[curChannel];
+                    float beta = betaData[curChannel];
+                    for (int s = 0; s < spatial; s++) {
+                        (*outputWalk++) = (((*inputWalk++) - mean[g]) / var[g]) * gamma + beta;
+                    }
+                }
+            }
+
+            inputData += channel * spatial;
+            outputData += channel * spatial;
+        }
+        delete[] mean;
+        delete[] var;
     }
 
     void CpuRMSNormOp::Run(const std::string &opType, const fastllm::DataDict &datas,
@@ -1402,6 +1475,511 @@ namespace fastllm {
         return (long long int) n * m * k;
     }
 
+    inline bool is_a_ge_zero_and_a_lt_b(int a, int b) {
+        return static_cast<unsigned>(a) < static_cast<unsigned>(b);
+    }
+
+    template <typename T>
+    void Im2colPart(T *image, T *col, int inputChannel, int inputHeight, int inputWidth, int outputHeight, int outputWidth,
+                    int kernel, int stride, int padding, int dialtion, bool rev = false) {
+        int input_row = 0, input_col = 0, current_row = 0, current_col = 0;
+        T *current_im;
+
+        if (rev) {
+            for (int output_rows = outputHeight; output_rows; output_rows--) {
+                input_col = 0;
+                for (int output_cols = outputWidth; output_cols; output_cols--) {
+                    current_im = image;
+                    for (int channel = inputChannel; channel--;) {
+                        current_row = input_row - padding;
+                        for (int kernel_row = 0; kernel_row < kernel; kernel_row++) {
+                            current_col = input_col - padding;
+                            for (int kernel_col = 0; kernel_col < kernel; kernel_col++) {
+                                if (!is_a_ge_zero_and_a_lt_b(current_row, inputHeight) ||
+                                    !is_a_ge_zero_and_a_lt_b(current_col, inputWidth)) {
+                                    *(col++) = (T) 0;
+                                } else {
+                                    *(col++) = current_im[current_row * inputWidth + current_col];
+                                }
+                                current_col += dialtion;
+                            }
+                            current_row += dialtion;
+                        }
+                        current_im += inputHeight * inputWidth;
+                    }
+                    input_col += stride;
+                }
+                input_row += stride;
+            }
+        } else {
+            // optimize for 1x1, s1
+            if (kernel == 1 && padding == 0 && stride == 1 && dialtion == 1) {
+                memcpy(col, image, sizeof(T) * inputChannel * inputHeight * inputWidth);
+            }
+            // optimize for 3x3, s1
+            else if (kernel == 3 && padding == 1 && stride == 1 && dialtion == 1 && inputHeight * inputWidth > 1) {
+                int outputChannelSize = outputHeight * outputWidth;
+                std::fill(col, col + inputChannel * kernel * kernel * outputHeight * outputWidth, (T) 0);
+                for (int c = 0; c < inputChannel; c++) {
+                    T *cols[9];
+                    cols[0] = col;
+                    cols[1] = col + outputChannelSize;
+                    cols[2] = col + 2 * outputChannelSize;
+                    cols[3] = col + 3 * outputChannelSize;
+                    cols[4] = col + 4 * outputChannelSize;
+                    cols[5] = col + 5 * outputChannelSize;
+                    cols[6] = col + 6 * outputChannelSize;
+                    cols[7] = col + 7 * outputChannelSize;
+                    cols[8] = col + 8 * outputChannelSize;
+                    //height:1
+                    //kh 0
+                    cols[0] += inputWidth;
+                    cols[1] += inputWidth;
+                    cols[2] += inputWidth;
+                    //kw0
+                    memcpy(cols[0] + 1, image, sizeof(T) * (inputWidth - 1));
+                    cols[0] += inputWidth;
+                    //kw1
+                    memcpy(cols[1], image, sizeof(T) * inputWidth);
+                    cols[1] += inputWidth;
+                    //kw2
+                    memcpy(cols[2], image + 1, sizeof(T) * (inputWidth - 1));
+                    cols[2] += inputWidth;
+                    //kh1
+                    //kw0
+                    memcpy(cols[3] + 1, image, sizeof(T) * (inputWidth - 1));
+                    cols[3] += inputWidth;
+                    //kw1
+                    memcpy(cols[4], image, sizeof(T) * inputWidth);
+                    cols[4] += inputWidth;
+                    //kw2
+                    memcpy(cols[5], image + 1, sizeof(T) * (inputWidth - 1));
+                    cols[5] += inputWidth;
+                    image += inputWidth;
+                    // 1~(hight-1)
+                    for (int h = 1; h < inputHeight - 1; h++) {
+                        T **cols_ptr = cols;
+                        for (int kernel_row = 0; kernel_row < kernel; kernel_row++) {
+                            memcpy(cols_ptr[0] + 1, image, sizeof(T) * (inputWidth - 1));
+                            cols_ptr[0] += inputWidth;
+                            //kw1
+                            memcpy(cols_ptr[1], image, sizeof(T) * inputWidth);
+                            cols_ptr[1] += inputWidth;
+                            //kw2
+                            memcpy(cols_ptr[2], image + 1, sizeof(T) * (inputWidth - 1));
+                            cols_ptr[2] += inputWidth;
+                            cols_ptr += 3;
+                        }
+                        image += inputWidth;
+                    }
+                    //hight
+                    //kh1
+                    //kw0
+                    memcpy(cols[3] + 1, image, sizeof(T) * (inputWidth - 1));
+                    cols[3] += inputWidth;
+                    //kw1
+                    memcpy(cols[4], image, sizeof(T) * inputWidth);
+                    cols[4] += inputWidth;
+                    //kw2
+                    memcpy(cols[5], image+1, sizeof(T) * (inputWidth - 1));
+                    cols[5] += inputWidth;
+                    //kh2
+                    //kw0
+                    memcpy(cols[6] + 1, image, sizeof(T) * (inputWidth - 1));
+                    cols[6] += inputWidth;
+                    //kw1
+                    memcpy(cols[7], image, sizeof(T) * inputWidth);
+                    cols[7] += inputWidth;
+                    //kw2
+                    memcpy(cols[8], image + 1, sizeof(T) * (inputWidth - 1));
+                    cols[8] += inputWidth;
+
+                    col += outputChannelSize * kernel * kernel;
+                    image += inputWidth;
+                }
+            } else {
+                for (int channel = inputChannel; channel--; image += inputHeight * inputWidth) {
+                    for (int kernel_row = 0; kernel_row < kernel; kernel_row++) {
+                        for (int kernel_col = 0; kernel_col < kernel; kernel_col++) {
+                            int input_row = -padding + kernel_row * dialtion;
+                            for (int output_rows = outputHeight; output_rows; output_rows--) {
+                                if (!is_a_ge_zero_and_a_lt_b(input_row, inputHeight)) {
+                                    std::fill(col, col + outputWidth, (T) 0);
+                                    col += outputWidth;
+                                } else {
+                                    if (stride == 1) {
+                                        int input_col = -padding + kernel_col * dialtion, cur = outputWidth;
+                                        if (input_col < 0) {
+                                            std::fill(col, col - input_col, (T) 0);
+                                            cur += input_col;
+                                            col -= input_col;
+                                            input_col = 0;
+                                        }
+
+                                        int cpyNumbers = std::min(cur, inputWidth - input_col);
+                                        memcpy(col, image + input_row * inputWidth + input_col, cpyNumbers * sizeof(T));
+                                        col += cpyNumbers;
+                                        cur -= cpyNumbers;
+                                        if (cur > 0) {
+                                            std::fill(col, col + cur, (T) 0);
+                                            col += cur;
+                                            cur = 0;
+                                        }
+                                    } else {
+                                        int input_col = -padding + kernel_col * dialtion;
+                                        for (int output_col = outputWidth; output_col; output_col--) {
+                                            if (is_a_ge_zero_and_a_lt_b(input_col, inputWidth)) {
+                                                *(col++) = image[input_row * inputWidth + input_col];
+                                            } else {
+                                                *(col++) = (T) 0;
+                                            }
+                                            input_col += stride;
+                                        }
+                                    }
+                                }
+                                input_row += stride;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    void CpuConv2dOp::Reshape(const std::string &opType, const fastllm::DataDict &datas,
+                              const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+        Data &weight = *(datas.find("weight")->second);
+
+        AssertInFastLLM(weight.dims[2] == weight.dims[3], "Fastllm dosen`t support kernel_h != kernel_w");
+
+        int stride = intParams.find("stride")->second;
+        int padding = intParams.find("padding")->second;
+        int dilation = intParams.find("dilation")->second;
+        int kernel = weight.dims[2];
+        int inputChannel = input.dims[1];
+        int inputHeight = input.dims[2];
+        int inputWidth = input.dims[3];
+
+        int batch = input.dims[0];
+        int outputChannel = weight.dims[0];
+        int outputHeight = ((inputHeight + padding * 2) - (dilation * (kernel - 1) + 1)) / stride + 1;
+        int outputWidth = ((inputWidth + padding * 2) - (dilation * (kernel - 1) + 1)) / stride + 1;
+
+        output.dataType = input.dataType;
+        output.Resize({batch, outputChannel, outputHeight, outputWidth});
+    }
+
+    void CpuConv2dOp::Run(const std::string &opType, const fastllm::DataDict &datas,
+                          const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+        Data &weight = *(datas.find("weight")->second);
+        Data &bias = *(datas.find("bias")->second);
+
+        int kernel = weight.dims[2];
+        int stride = intParams.find("stride")->second;
+        int padding = intParams.find("padding")->second;
+        int dilation = intParams.find("dilation")->second;
+        int group = intParams.find("group")->second;
+
+        int batch = input.dims[0];
+        int inputChannel = input.dims[1];
+        int inputHeight = input.dims[2];
+        int inputWidth = input.dims[3];
+        int outputChannel = output.dims[1];
+        int outputHeight = output.dims[2];
+        int outputWidth = output.dims[3];
+
+        output.Allocate();
+        auto pool = GetPool();
+        std::vector<std::future<void> > futures;
+        int threadNum = GetThreads();
+
+        int n = outputChannel / group;
+        int m = inputChannel * kernel * kernel / group;
+        int k = outputHeight * outputWidth;
+        int colOffset =  m * k;
+        int weightOffset = n * m;
+        int outputOffset = n * k;
+
+        if (input.dataType == DataType::FLOAT32 && output.dataType == DataType::FLOAT32) {
+            float *inputData = (float *) input.cpuData;
+            float *outputData = (float *) output.cpuData;
+            float *biasData = bias.dims.size() > 0 ? (float *) bias.cpuData : nullptr;
+
+            float *col = new float[batch * inputChannel * kernel * kernel * outputHeight * outputWidth];
+            // 1. im2col 
+            // 此处 batch * inputChannel 合并为一个channel维度做im2col
+            int channels = batch * inputChannel;
+            int per = channels / threadNum;
+            for (int i = 0; i < threadNum - 1; i++) {
+                float *curImage = inputData + i * per * inputHeight * inputWidth;
+                float *curCol = col + i * per * kernel * kernel * outputHeight * outputWidth;
+                futures.push_back(pool->Submit(Im2colPart<float>, curImage, curCol, per, 
+                    inputHeight, inputWidth, outputHeight, outputWidth, kernel, stride, padding, dilation, false));
+            }
+            int last = channels - (threadNum - 1) * per;
+            float *curImage = inputData + (threadNum - 1) * per * inputHeight * inputWidth;
+            float *curCol = col + (threadNum - 1) * per * kernel * kernel * outputHeight * outputWidth;
+            Im2colPart(curImage, curCol, last, inputHeight, inputWidth, outputHeight, outputWidth, 
+                       kernel, stride, padding, dilation, false);
+            for (int i = 0; i < futures.size(); i++) {
+                futures[i].get();
+            }
+            futures.clear();
+
+            // 2. gemm
+            for (int b = 0; b < batch; b++) {
+                if (weight.dataType == DataType::FLOAT32) {
+                    float *weightData = (float *) weight.cpuData;
+                    for (int g = 0; g < group; g++) {
+                        float *colWalk = col + g * colOffset;
+                        float *weightWalk = weightData + g * weightOffset;
+                        float *outputWalk = outputData + g * outputOffset;
+
+                        // transpose col from [m, k] to [k, m]
+                        float *colTrans = new float[k * m];
+                        Transpose(colTrans, colWalk, m, k, m, k);
+
+                        int per = k / threadNum;
+                        int cur = 0;
+                        for (int i = 0; i < threadNum - 1; i++) {
+                            int end = cur + per + (cur + per * (threadNum - i) < k);
+                            futures.push_back(pool->Submit(FloatLinearPart, weightWalk, colTrans, nullptr, outputWalk,
+                                                           n, m, k, cur, end));
+                            cur = end;
+                        }
+                        FloatLinearPart(weightWalk, colTrans, nullptr, outputWalk, n, m, k, cur, k);
+                        for (int i = 0; i < futures.size(); i++) {
+                            futures[i].get();
+                        }
+                        futures.clear();
+
+                        delete[] colTrans;
+                    }
+                } else if (weight.dataType == DataType::FLOAT16) {
+                    uint16_t *weightData = (uint16_t *) weight.cpuData;
+                    for (int g = 0; g < group; g++) {
+                        float *colWalk = col + g * colOffset;
+                        uint16_t *weightWalk = weightData + g * weightOffset;
+                        float *outputWalk = outputData + g * outputOffset;
+
+                        // transpose col from [m, k] to [k, m]
+                        float *colTrans = new float[k * m];
+                        Transpose(colTrans, colWalk, m, k, m, k);
+
+#ifdef __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
+                        uint16_t *temp = new uint16_t[m * k];
+                        for (int i = 0; i < m * k; i++) {
+                            temp[i] = float_to_half(colTrans[i]);
+                        }
+
+                        int per = k / threadNum;
+                        int cur = 0;
+                        std::vector<std::future<void> > futures;
+                        for (int i = 0; i < threadNum - 1; i++) {
+                            int end = cur + per + (cur + per * (threadNum - i) < k);
+                            futures.push_back(pool->Submit(Float16LinearPart, (float *) weightWalk, temp, nullptr, outputWalk,
+                                                        n, m, k, cur, end));
+                            cur = end;
+                        }
+                        Float16LinearPart((float *) weightWalk, temp, nullptr, outputWalk, n, m, k, cur, k);
+                        for (int i = 0; i < futures.size(); i++) {
+                            futures[i].get();
+                        }
+                        futures.clear();
+                        delete[] temp;
+#else
+                        // todo
+#endif
+                        delete[] colTrans;
+                    }
+                } else if (weight.dataType == DataType::INT8) {
+                    uint8_t *weightData = (uint8_t *) weight.cpuData;
+                    weight.CalcWeightSum();
+                    for (int g = 0; g < group; g++) {
+                        float *colWalk = col + g * colOffset;
+                        uint8_t *weightWalk = weightData + g * weightOffset;
+                        float *outputWalk = outputData + g * outputOffset;
+
+                        auto weightSum = std::vector<int>(weight.weightSum.begin() + g * n,
+                            weight.weightSum.begin() + g * n + n);
+                        auto weightConfig = std::vector<LowBitConfig>(weight.perChannelsConfigs.begin() + g * n,
+                            weight.perChannelsConfigs.begin() + g * n + n);
+                        
+                        // transpose col from [m, k] to [k, m]
+                        float *colTrans = new float[k * m];
+                        Transpose(colTrans, colWalk, m, k, m, k);
+
+                        float minValue = 1e9, maxValue = -1e9;
+                        for (int i = 0; i < k * m; i++) {
+                            minValue = std::min(minValue, colTrans[i]);
+                            maxValue = std::max(maxValue, colTrans[i]);
+                        }
+                        auto inputConfig = LowBitConfig(minValue, maxValue, 8, 0);
+                        std::vector<uint8_t> uinput;
+                        uinput.resize(k * m);
+
+                        for (int i = 0; i < k * m; i++) {
+#ifdef __AVX2__
+                            uinput[i] = inputConfig.quantization(colTrans[i]);
+                            uinput[i] = (uinput[i] + !uinput[i]) ^ 128;
+#else
+                            uinput[i] = inputConfig.quantization(colTrans[i]);
+#endif
+                        }
+                        delete[] colTrans;
+
+                        std::vector<uint32_t> inputSum(k, 0);
+                        for (int i = 0; i < k; i++) {
+                            for (int j = 0; j < m; j++) {
+#ifdef __AVX2__
+                                inputSum[i] += uinput[i * m + j] ^ 128;
+#else
+                                inputSum[i] += uinput[i * m + j];
+#endif
+                            }
+                        }
+
+                        MultiplyMultiThread(weightWalk, uinput.data(), (int32_t *) outputWalk, n, m, k, GetThreads());
+                        for (int i = 0; i < n; i++) {
+                            for (int j = 0; j < k; j++) {
+                                int value = ((int32_t *) outputWalk)[i * k + j];
+#ifdef __AVX2__
+                                value += (128 * inputSum[j]);
+                                value += (128 * weightSum[i]);
+                                value -= m * 128 * 128;
+#endif
+                                value -= inputSum[j] * weightConfig[i].zeroPoint;
+                                value -= weightSum[i] * inputConfig.zeroPoint;
+                                value += (int) weightConfig[i].zeroPoint * inputConfig.zeroPoint * m;
+                                outputWalk[i * k + j] = inputConfig.scale * weightConfig[i].scale * value;
+                            }
+                        }
+                    }
+                } else {
+                    ErrorInFastLLM("Unsupported conv weight data type.\n");
+                }
+
+                col += inputChannel * kernel * kernel * outputHeight * outputWidth;
+                outputData += outputChannel * outputHeight * outputWidth;
+            }
+            
+            // clear data
+            col -= batch * inputChannel * kernel * kernel * outputHeight * outputWidth;
+            delete[] col;
+
+            // 3. add bias
+            outputData = (float *) output.cpuData;
+            for (int b = 0; b < batch; b++) {
+                for (int c = 0; c < outputChannel; c++) {
+                    for (int i = 0; i < outputHeight * outputWidth; i++) {
+                        outputData[i] += biasData[c];
+                    }
+                    outputData += outputHeight * outputWidth;
+                }
+            }
+        } else if (input.dataType == DataType::FLOAT16 && output.dataType == DataType::FLOAT16) {
+            // todo
+            uint16_t *inputData = (uint16_t *) input.cpuData;
+            uint16_t *weightData = (uint16_t *) weight.cpuData;
+            uint16_t *outputData = (uint16_t *) output.cpuData;
+            float *biasData = bias.dims.size() > 0 ? (float *) bias.cpuData : nullptr;
+        } else {
+            
+        }
+    }
+
+    long long int CpuConv2dOp::Ops(const std::string &opType, const fastllm::DataDict &datas,
+                                   const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+        Data &weight = *(datas.find("weight")->second);
+
+        int kernel = weight.dims[2];
+        int group = intParams.find("group")->second;
+
+        int batch = input.dims[0];
+        int inputChannel = input.dims[1];
+        int outputChannel = output.dims[1];
+        int outputHeight = output.dims[2];
+        int outputWidth = output.dims[3];
+        return (long long int) batch * outputChannel * inputChannel * outputHeight * outputWidth * kernel * kernel / group;
+    }
+
+    void CpuInterpolateOp::Reshape(const std::string &opType, const DataDict &datas, 
+                                   const FloatDict &floatParams, const IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+        float scale = floatParams.find("scale") != floatParams.end() ? floatParams.find("scale")->second : 2.0;
+
+        std::vector<int> dims = input.dims;
+        dims[2] = (int) roundf(dims[2] * scale);
+        dims[3] = (int) roundf(dims[3] * scale);
+
+        output.dataType = input.dataType;
+        output.Resize(dims);
+    }
+
+    void CpuInterpolateOp::Run(const std::string &opType, const DataDict &datas, 
+                               const FloatDict &floatParams, const IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+        float scale = floatParams.find("scale") != floatParams.end() ? floatParams.find("scale")->second : 2.0;
+        int mode = intParams.find("mode") != intParams.end() ? intParams.find("mode")->second : 0;
+        int alignCorner = intParams.find("alignCorner") != intParams.end() ? intParams.find("alignCorner")->second : 0;
+
+        output.Allocate();
+
+        float *inputData = (float *) input.cpuData;
+        float *outputData = (float *) output.cpuData;
+        int channel = input.dims[0] * input.dims[1];
+        int inputHeight = input.dims[2], inputWidth = input.dims[3];
+        int outputHeight = output.dims[2], outputWidth = output.dims[3];
+
+        if (mode == 0) {
+            // bilinear
+            for (int i = 0; i < channel; i++) {
+                for (int h = 0; h < outputHeight; i++) {
+                    float input_h = (float) h / scale;
+                    int h0 = int(input_h);
+                    int h1 = std::min(h0 + 1, inputHeight - 1);
+                    for (int w = 0; w < outputWidth; w++) {
+                        float input_w = (float) w / scale;
+                        int w0 = int(input_w);
+                        int w1 = std::min(w0 + 1, inputWidth - 1);
+
+                        outputData[h * outputWidth + w] = 
+                            inputData[h0 * inputWidth + w0] * (1 - (input_h - h0)) * (1 - (input_w - w0)) +
+                            inputData[h1 * inputWidth + w0] * (input_h - h0) * (1 - (input_w - w0)) +
+                            inputData[h0 * inputWidth + w1] * (1 - (input_h - h0)) * (input_w - w0) +
+                            inputData[h1 * inputWidth + w1] * (input_h - h0) * (input_w - w0);
+                    }
+                }
+                inputData += inputHeight * inputWidth;
+                outputData += outputHeight * outputWidth;
+            }
+        } else if (mode == 1) {
+            // nearest
+            for (int i = 0; i < channel; i++) {
+                for (int h = 0; h < outputHeight; h++) {
+                    int in_h = std::min(alignCorner ? int(round(h / scale)) : int(h / scale), inputHeight - 1);
+                    for (int w = 0; w < outputWidth; w++) {
+                        int in_w = std::min(alignCorner ? int(round(w / scale)) : int(w / scale), inputWidth - 1);
+                        (*outputData++) = inputData[in_h * inputWidth + in_w];
+                    }
+                }
+                inputData += inputHeight * inputWidth;
+            }
+        } else {
+            ErrorInFastLLM("Unssuported Interpolate type.\n");
+        }
+
+        output.Allocate();
+    }
+
     void CpuSplitOp::Reshape(const std::string &opType, const fastllm::DataDict &datas,
                              const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
         Data &input = *(datas.find("input")->second);
@@ -1600,10 +2178,11 @@ namespace fastllm {
                 for (int j = 0; j < m; j++) {
                     float now = input0Data[i * input0Stride + j] * alpha;
                     int l = 0;
-#ifdef __arrch64__
-                    float32x4_t nowx4 = vdup_n_f32(now);
+#ifdef __aarch64__
+                    float32x4_t nowx4 = vdupq_n_f32(now);
                     for (; l + 3 < k; l += 4) {
-                        vst1q_f32(outputData + i * k + l, vmul(nowx4, vld1q_f32(input1Data + j * k + l)));
+                        float32x4_t sumx4 = vaddq_f32(vld1q_f32(outputData + i * k + l), vmulq_f32(nowx4, vld1q_f32(input1Data + j * k + l)));
+                        vst1q_f32(outputData + i * k + l, sumx4);
                     }
 #endif
                     for (; l < k; l++) {
@@ -1765,10 +2344,10 @@ namespace fastllm {
 #ifdef _WIN64
         threadNum = 1;
 #endif
-        if (batch0 * n * m * k < 64 * 4096) {
+        if ((long) batch0 * n * m * k < 64ll * 4096) {
             threadNum = 1;
         }
-        threadNum = std::min(threadNum, 4);
+        // threadNum = std::min(threadNum, 4);
         // TODO: 汇编优化
         int per = batch0 / threadNum;
         int cur = 0;
@@ -1870,10 +2449,10 @@ namespace fastllm {
 #ifdef _WIN64
         threadNum = 1;
 #endif
-        if (batch0 * n * m * k < 64 * 4096) {
+        if ((long) batch0 * n * m * k < 64ll * 4096) {
             threadNum = 1;
         }
-        threadNum = std::min(threadNum, 4);
+        // threadNum = std::min(threadNum, 4);
         int per = batch0 / threadNum;
         int cur = 0;
         auto pool = GetPool();
@@ -1924,6 +2503,58 @@ namespace fastllm {
         return (long long int) batch * n * m * k;
     }
 
+    void CpuSoftMaxInner1Single(float *inputData, float *outputData, int outer, int channels) {
+        for (int i = 0; i < outer; i++) {
+            float maxValue = -FLT_MAX;
+            int j = 0;
+#ifdef __aarch64__
+            float32x4_t vmax = vdupq_n_f32(maxValue);
+            for (; j + 3 < channels; j += 4) {
+                vmax = vmaxq_f32(vmax, vld1q_f32(inputData + j));
+            }
+            for (int k = 0; k < 4; k++) {
+                maxValue = std::max(maxValue, vmax[k]);
+            }
+#endif
+            for (; j < channels; j++) {
+                maxValue = std::max(maxValue, inputData[j]);
+            }
+
+            j = 0;
+#ifdef __aarch64__
+            vmax = vdupq_n_f32(maxValue);
+            for (; j + 3 < channels; j += 4) {
+                vst1q_f32(outputData + j, exp_ps(vsubq_f32(vld1q_f32(inputData + j), vmax)));
+            }
+#endif
+            for (; j < channels; j++) {
+                outputData[j] = exp(inputData[j] - maxValue);
+            }
+            float sum = 0.0;
+            j = 0;
+            for (; j < channels; j++) {
+                sum += outputData[j];
+            }
+            if (fabs(sum) == 0) {
+                sum = std::numeric_limits<float>::quiet_NaN();
+            } else {
+                sum = 1 / sum;
+            }
+            j = 0;
+#ifdef __aarch64__
+            float32x4_t fsum = vdupq_n_f32(sum);
+            for (j = 0; j + 3 < channels; j += 4) {
+                vst1q_f32(outputData + j, vmulq_f32(vld1q_f32(outputData + j), fsum));
+            }
+#endif
+            for (; j < channels; j++) {
+                outputData[j] = outputData[j] * sum;
+            }
+            inputData += channels;
+            outputData += channels;
+        }
+    }
+
     void CpuSoftMaxOp::Run(const std::string &opType, const fastllm::DataDict &datas,
                            const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
         Data &input = *(datas.find("input")->second);
@@ -1943,6 +2574,9 @@ namespace fastllm {
         float *inputData = (float*)input.cpuData;
         float *outputData = (float*)output.cpuData;
 
+        int threadNum = GetThreads();
+        auto pool = GetPool();
+
         if (input.dataType == DataType::FLOAT16) {
             int len = input.Count(0);
             inputData = new float[len];
@@ -1953,52 +2587,23 @@ namespace fastllm {
         }
 
         if (inner == 1) {
-            for (int i = 0; i < outer; i++) {
-                float maxValue = 0;
-                int j = 0;
-#ifdef __aarch64__
-                float32x4_t vmax = vdupq_n_f32(-1e9);
-                for (; j + 3 < channels; j += 4) {
-                    vmax = vmaxq_f32(vmax, vld1q_f32(inputData + j));
+            int per = outer / threadNum;
+            if (per > 0) {
+                std::vector<std::future<void>> futures;
+                for (int i = 0; i < threadNum - 1; i++) {
+                    float *inputWalk = inputData + i * per * channels;
+                    float *outputWalk = outputData + i * per * channels;
+                    futures.push_back(pool->Submit(CpuSoftMaxInner1Single, inputWalk, outputWalk, per, channels));
                 }
-                for (int k = 0; k < 4; k++) {
-                    maxValue = std::max(maxValue, vmax[k]);
+                int last = outer - (threadNum - 1) * per;
+                float *inputWalk = inputData + (threadNum - 1) * per * channels;
+                float *outputWalk = outputData + (threadNum - 1) * per * channels;
+                CpuSoftMaxInner1Single(inputWalk, outputWalk, last, channels);
+                for (int i = 0; i < futures.size(); i++) {
+                    futures[i].get();
                 }
-#endif
-                for (; j < channels; j++) {
-                    maxValue = std::max(maxValue, inputData[j]);
-                }
-
-                j = 0;
-#ifdef __aarch64__
-                vmax = vdupq_n_f32(maxValue);
-                for (; j + 3 < channels; j += 4) {
-                    vst1q_f32(outputData + j, exp_ps(vsubq_f32(vld1q_f32(inputData + j), vmax)));
-                }
-#endif
-                for (; j < channels; j++) {
-                    outputData[j] = exp(inputData[j] - maxValue);
-                }
-                float sum = 0.0;
-                j = 0;
-                for (; j < channels; j++) {
-                    sum += outputData[j];
-                }
-                if (fabs(sum) < 1e-9) {
-                    sum = 0.1;
-                }
-                j = 0;
-#ifdef __aarch64__
-                float32x4_t fsum = vdupq_n_f32(sum);
-                for (j = 0; j + 3 < channels; j += 4) {
-                    vst1q_f32(outputData + j, vdivq_f32(vld1q_f32(outputData + j), fsum));
-                }
-#endif
-                for (; j < channels; j++) {
-                    outputData[j] = outputData[j] / sum;
-                }
-                inputData += channels;
-                outputData += channels;
+            } else {
+                CpuSoftMaxInner1Single(inputData, outputData, outer, channels);
             }
         } else {
             for (int i = 0; i < outer; i++) {
@@ -2060,9 +2665,20 @@ namespace fastllm {
         Data &input = *(datas.find("input")->second);
         Data &output = *(datas.find("output")->second);
         output.Allocate();
-        AssertInFastLLM(input.dataType == DataType::FLOAT32, "Silu error: Data's type should be float32.\n");
+        AssertInFastLLM(input.dataType == DataType::FLOAT32 || input.dataType == DataType::FLOAT16,
+                        "Silu error: Data's type should be float32.\n");
         float *inputData = (float*)input.cpuData;
         float *outputData = (float*)output.cpuData;
+
+        if (input.dataType == DataType::FLOAT16) {
+            int len = input.Count(0);
+            inputData = new float[len];
+            outputData = new float[len];
+            for (int i = 0; i < len; i++) {
+                inputData[i] = fp16tofp32.dict[((uint16_t *) input.cpuData)[i]];
+            }
+        }
+
         int len = input.Count(0);
         int threadNum = GetThreads();
         int per = len / threadNum;
@@ -2078,6 +2694,15 @@ namespace fastllm {
         FloatSiluPart(inputData + start, outputData + start, last);
         for (int i = 0; i < futures.size(); i++) {
             futures[i].get();
+        }
+
+        if (input.dataType == DataType::FLOAT16) {
+            for (int i = 0; i < len; i++) {
+                ((uint16_t *) output.cpuData)[i] = float_to_half(outputData[i]);
+            }
+
+            delete[] inputData;
+            delete[] outputData;
         }
     }
 
@@ -2169,6 +2794,11 @@ namespace fastllm {
         int per = len / threadNum;
         int last = len - (threadNum - 1) * per;
 
+        if (per <= 256) {
+           FloatGeluNewPart(inputData, outputData, len); 
+           return;
+        }
+
         auto pool = GetPool();
         std::vector <std::future <void> > futures;
         int start = 0;
@@ -2193,6 +2823,29 @@ namespace fastllm {
         output.Resize(dims);
     }
 
+    void FloatSwigluPart(float *input, float *output, int outer, int spatial) {
+        int mid = spatial / 2;
+        for (int o = 0; o < outer; o++) {
+            int i = 0;
+#ifdef __aarch64__
+            float32x4_t c1 = vdupq_n_f32(1.0f);
+            for (; i + 3 < mid; i += 4) {
+                float32x4_t vx = vld1q_f32(input + i);
+                float32x4_t vy = vld1q_f32(input + i + mid);
+                vx = vdivq_f32(vx, vaddq_f32(c1, exp_ps(vnegq_f32(vx))));
+                vy = vmulq_f32(vx, vy);
+                vst1q_f32(output + i, vy);
+            }
+#endif
+            for (; i < mid; i++) {
+                float x = input[i], y = input[i + mid];
+                output[i] = (x / (1.0 + expf(-x))) * y;
+            }
+            input += spatial;
+            output += mid;
+        }
+    }
+
     void CpuSwigluOp::Run(const std::string &opType, const fastllm::DataDict &datas,
                            const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
         Data &input = *(datas.find("input")->second);
@@ -2215,24 +2868,26 @@ namespace fastllm {
 
         int spatial = input.Count(input.dims.size() - 1), mid = spatial / 2;
         int outer = input.Count(0) / spatial;
-        for (int o = 0; o < outer; o++) {
-            int i = 0;
-#ifdef __aarch64__
-            float32x4_t c1 = vdupq_n_f32(1.0f);
-            for (; i + 3 < mid; i += 4) {
-                float32x4_t vx = vld1q_f32(inputData + i);
-                float32x4_t vy = vld1q_f32(inputData + i + mid);
-                vx = vdivq_f32(vx, vaddq_f32(c1, exp_ps(vnegq_f32(vx))));
-                vy = vmulq_f32(vx, vy);
-                vst1q_f32(outputData + i, vy);
-            }
-#endif
-            for (; i < mid; i++) {
-                float x = inputData[i], y = inputData[i + mid];
-                outputData[i] = (x / (1.0 + expf(-x))) * y;
-            }
-            inputData += spatial;
-            outputData += spatial / 2;
+        
+        int threadNum = GetThreads();
+        int per = outer / threadNum;
+        int last = outer - (threadNum - 1) * per;
+
+        if (per == 0) {
+            FloatSwigluPart(inputData, outputData, outer, spatial);
+            return;
+        }
+
+        auto pool = GetPool();
+        std::vector <std::future<void>> futures;
+        for (int i = 0; i < threadNum - 1; i++) {
+            FloatSwigluPart(inputData, outputData, per, spatial);
+            inputData += per * spatial;
+            outputData += per * mid;
+        }
+        FloatSwigluPart(inputData, outputData, last, spatial);
+        for (int i = 0; i < futures.size(); i++) {
+            futures[i].get();
         }
 
         if (input.dataType == DataType::FLOAT16) {
@@ -2296,6 +2951,29 @@ namespace fastllm {
         }
     }
 
+    void CpuScalingOp::Run(const std::string &opType, const fastllm::DataDict &datas,
+                           const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
+        Data &data = *(datas.find("input")->second);
+        float v = floatParams.find("v") != floatParams.end() ? floatParams.find("v")->second : 1.0;
+
+        AssertInFastLLM(data.dataType == DataType::FLOAT32 || data.dataType == DataType::FLOAT16,
+                        "Scaling error: Data's type should be float32 or float16.\n");
+
+        int len = data.Count(0);
+
+        if (data.dataType == DataType::FLOAT32) {
+            float *cpuData = (float *) data.cpuData;
+            for (int i = 0; i < len; i++) {
+                cpuData[i] *= v;
+            }
+        } else if (data.dataType == DataType::FLOAT16) {
+            uint16_t *cpuData = (uint16_t *) data.cpuData;
+            for (int i = 0; i < len; i++) {
+                cpuData[i] = float_to_half(half_to_float(cpuData[i]) * v);
+            }
+        }
+    }
+
     void CpuAddToOp::Run(const std::string &opType, const fastllm::DataDict &datas,
                          const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
         Data &input0 = *(datas.find("input0")->second);
@@ -2304,23 +2982,42 @@ namespace fastllm {
 
         AssertInFastLLM(input0.dataType == DataType::FLOAT32 || input1.dataType == DataType::FLOAT16,
                         "AddTo error: Data's type should be float32 or float16.\n");
-        AssertInFastLLM(input0.dims == input1.dims, "AddTo error: input's shape should be same.\n");
 
-        int len = input0.Count(0);
-
-        if (input0.dataType == DataType::FLOAT32) {
-            float *input0Data = (float *) input0.cpuData;
-            float *input1Data = (float *) input1.cpuData;
-            for (int i = 0; i < len; i++) {
-                input0Data[i] += input1Data[i] * alpha;
+        if (input0.dims == input1.dims) {
+            int len = input0.Count(0);
+            if (input0.dataType == DataType::FLOAT32) {
+                float *input0Data = (float *) input0.cpuData;
+                float *input1Data = (float *) input1.cpuData;
+                for (int i = 0; i < len; i++) {
+                    input0Data[i] += input1Data[i] * alpha;
+                }
+            } else if (input0.dataType == DataType::FLOAT16) {
+                uint16_t *input0Data = (uint16_t *) input0.cpuData;
+                uint16_t *input1Data = (uint16_t *) input1.cpuData;
+                for (int i = 0; i < len; i++) {
+                    input0Data[i] = float_to_half(fp16tofp32.dict[input0Data[i]] + fp16tofp32.dict[input1Data[i]] * alpha);
+                }
             }
-        } else if (input0.dataType == DataType::FLOAT16) {
-            uint16_t *input0Data = (uint16_t *) input0.cpuData;
-            uint16_t *input1Data = (uint16_t *) input1.cpuData;
-            for (int i = 0; i < len; i++) {
-                input0Data[i] = float_to_half(fp16tofp32.dict[input0Data[i]] + fp16tofp32.dict[input1Data[i]] * alpha);
+        } else {
+            int len0 = input0.Count(0);
+            int len1 = input1.Count(0);
+            int scale = len0 / len1;
+            AssertInFastLLM(scale > 1, "AddTo error: Input0 size must be no less than Input1 size.\n");
+            if (input0.dataType == DataType::FLOAT32) {
+                float *input0Data = (float *) input0.cpuData;
+                float *input1Data = (float *) input1.cpuData;
+                for (int i = 0; i < len0; i++) {
+                    input0Data[i] += input1Data[i / scale] * alpha;
+                }
+            } else if (input0.dataType == DataType::FLOAT16) {
+                uint16_t *input0Data = (uint16_t *) input0.cpuData;
+                uint16_t *input1Data = (uint16_t *) input1.cpuData;
+                for (int i = 0; i < len0; i++) {
+                    input0Data[i] = float_to_half(fp16tofp32.dict[input0Data[i]] + fp16tofp32.dict[input1Data[i / scale]] * alpha);
+                }
             }
         }
+        
     }
 
     void CpuAttentionMaskOp::Run(const std::string &opType, const fastllm::DataDict &datas,
@@ -2857,6 +3554,116 @@ namespace fastllm {
                 }
                 curInput += spatial;
             }
+        }
+    }
+
+    void CpuLinspaceOp::Reshape(const std::string &opType, const DataDict &datas, 
+                                const FloatDict &floatParams, const IntDict &intParams) {
+        Data &data = *(datas.find("data")->second);
+        float start = floatParams.find("start")->second;
+        float end = floatParams.find("end")->second;
+        int steps = intParams.find("steps")->second;
+
+        data.Resize({steps});
+        data.dataType = DataType::FLOAT32;
+    }
+
+    void CpuLinspaceOp::Run(const std::string &opType, const DataDict &datas, 
+                            const FloatDict &floatParams, const IntDict &intParams) {
+        Data &data = *(datas.find("data")->second);
+        float start = floatParams.find("start")->second;
+        float end = floatParams.find("end")->second;
+        int steps = intParams.find("steps")->second;
+
+        data.Allocate();
+        float *cpuData = (float *) data.cpuData;
+        float stepSize = (end - start) / (steps - 1);
+        for (int i = 0; i < steps; i++) {
+            float value = start + i * stepSize;
+            cpuData[i] = value;
+        }
+    }
+
+    void CpuPowOp::Run(const std::string &opType, const DataDict &datas, 
+                       const FloatDict &floatParams, const IntDict &intParams) {
+        Data &data = *(datas.find("data")->second);
+        float p = floatParams.find("p")->second;
+
+        AssertInFastLLM(data.dataType == DataType::FLOAT32, "Pow op only support float32 data.\n");
+
+        int len = data.Count(0);
+        float *cpuData = (float *) data.cpuData;
+        for (int i = 0; i < len; i++) {
+            cpuData[i] = powf(cpuData[i], p);
+        }
+    }
+
+    void CpuCumProdOp::Run(const std::string &opType, const DataDict &datas, 
+                           const FloatDict &floatParams, const IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+        int axis = intParams.find("axis") != intParams.end() ? intParams.find("axis")->second : 0;
+
+        output.Allocate();
+
+        int outer = input.Count(0) / input.Count(axis);
+        int channels = input.dims[axis];
+        int inner = input.strides[axis];
+
+        AssertInFastLLM(input.dataType == DataType::FLOAT32, "CumProd op only suport float32 input.\n");
+
+        float *inputData = (float *) input.cpuData;
+        float *outputData = (float *) output.cpuData;
+
+        if (outer == 1 && inner == 1) {
+            outputData[0] = inputData[0];
+            for (int i = 1; i < input.Count(0); i++) {
+                outputData[i] = inputData[i] * outputData[i - 1];
+            }
+            return;
+        }
+        for (int o = 0; o < outer; o++) {
+            for (int c = 0; c < channels; c++) {
+                if (c == 0) {
+                    for (int i = 0; i < inner; i++) {
+                        int x = o * channels * inner + c * inner + i;
+                        outputData[x] = inputData[x];
+                    }
+                } else {
+                    for (int i = 0; i < inner; i++) {
+                        int x = o * channels * inner + c * inner + i;
+                        outputData[x] = inputData[x] * outputData[x - inner];
+                    }
+                }
+            }
+        }
+    }
+
+    void CpuUniqueOp::Run(const std::string &opType, const DataDict &datas, 
+                          const FloatDict &floatParams, const IntDict &intParams) {
+        Data &data = *(datas.find("data")->second);
+
+        AssertInFastLLM(data.dataType == DataType::FLOAT32, "Unique op only support float32.\n");
+
+        std::vector<float> v((float *) data.cpuData, (float *) data.cpuData + data.Count(0));
+        auto newEnd = std::unique(v.begin(), v.end());
+        std::vector<float> newv(v.begin(), newEnd);
+        
+        data.CopyFrom(Data(DataType::FLOAT32, {(int) newv.size()}, newv));
+    }
+
+    void CpuRandnOp::Run(const std::string &opType, const DataDict &datas, 
+                         const FloatDict &floatParams, const IntDict &intParams) {
+        Data &data = *(datas.find("data")->second);
+
+        AssertInFastLLM(data.dataType == DataType::FLOAT32, "Randn op only support float32.\n");
+
+        int len = data.Count(0);
+        std::default_random_engine generator;
+        std::normal_distribution<float> dist(0.f, 1.f);
+
+        for (int i = 0; i < len; i++) {
+            ((float *) data.cpuData)[i] = dist(generator);
         }
     }
 }

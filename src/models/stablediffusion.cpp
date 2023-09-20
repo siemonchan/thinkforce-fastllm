@@ -225,10 +225,10 @@ namespace fastllm {
         scale = powf((float) head_dim, -0.5f);
 
         vae_scale_factor = 8;   
-        unet_saple_size = 96;
+        unet_sample_size = 96;
         channels = 4;
-        height = vae_scale_factor * unet_saple_size;
-        width = vae_scale_factor * unet_saple_size;
+        height = vae_scale_factor * unet_sample_size;
+        width = vae_scale_factor * unet_sample_size;
 
         unet_block_oc = {320, 640, 1280, 1280};
         unet_down_block_size = unet_block_oc.size();
@@ -248,7 +248,7 @@ namespace fastllm {
     }
 
     void StableDiffusionModel::SetImageSize(int size) {
-        AssertInFastllm(size % vae_scale_factor == 0, "Image size of StableDiffusion must align to vae_scale_factor.\n");
+        AssertInFastLLM(size % vae_scale_factor == 0, "Image size of StableDiffusion must align to vae_scale_factor.\n");
         unet_sample_size = size / vae_scale_factor;
         height = size;
         width = size;
@@ -911,7 +911,9 @@ namespace fastllm {
         // tokenize
         Data positiveToken = this->weight.tokenizer.Encode(MakeInput(positivePrompt));
         Data negativeToken = this->weight.tokenizer.Encode(MakeInput(negativePrompt));
-        Data positionIds;
+        Data positionIds = Data();
+
+        // padding to prompt_len
         std::vector<float> positiveData;
         std::vector<float> negativeData;
         std::vector<float> positionData;
@@ -920,9 +922,9 @@ namespace fastllm {
             negativeData.push_back(i < negativeToken.Count(0) ? ((float *) negativeToken.cpuData)[i] : 0.f);
             positionData.push_back((float) i);
         }
-        positiveToken = Data(DataType::FLOAT32, {1, prompt_len}, positiveData);
-        negativeToken = Data(DataType::FLOAT32, {1, prompt_len}, negativeData);
-        positionIds = Data(DataType::FLOAT32, {1, prompt_len}, positionData);
+        positiveToken.CopyFrom(Data(DataType::FLOAT32, {1, prompt_len}, positiveData));
+        negativeToken.CopyFrom(Data(DataType::FLOAT32, {1, prompt_len}, negativeData));
+        positionIds.CopyFrom(Data(DataType::FLOAT32, {1, prompt_len}, positionData));
 
         // todo: set imageSize
         num_inference_steps = inferenceRound;
