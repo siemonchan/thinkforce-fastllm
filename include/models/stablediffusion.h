@@ -21,6 +21,8 @@ namespace fastllm {
             Data &sample,
             Data &result,
             int timestep);
+        
+        void ClearModelOutputs();
 
         int num_inference_steps;
         int num_train_steps;
@@ -49,7 +51,7 @@ namespace fastllm {
     public:
         StableDiffusionModel();
 
-        SetImageSize(int size);
+        void SetImageSize(int size);
 
         void TextEncoder(
             const Data &inputIds,
@@ -66,6 +68,12 @@ namespace fastllm {
             Data &latent);
 
         void ResBlock(
+            Data &hiddenStates,
+            Data &emb,
+            Data &result,
+            std::string pre);
+        
+        void ResBlockInt8(
             Data &hiddenStates,
             Data &emb,
             Data &result,
@@ -112,6 +120,8 @@ namespace fastllm {
             Data &image);
 
         std::string MakeInput(const std::string &input);
+
+        void WarmUp();
         
         int prompt_len;
         int embed_dim;
@@ -125,7 +135,7 @@ namespace fastllm {
         int channels, height, width;
         int vae_scale_factor;
 
-        int unet_saple_size;
+        int unet_sample_size;
         std::vector<int> unet_block_oc;
         int unet_down_block_size;
         int unet_up_block_size;

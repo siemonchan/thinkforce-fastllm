@@ -105,6 +105,7 @@ namespace fastllm {
         model->weight.LoadFromFile(fileNmae);
         model->weight.tokenizer.type = Tokenizer::TokenizerType::CLIP;
         model->scheduler.Init();
+        model->WarmUp();
         return std::unique_ptr<StableDiffusionModel>(model);
     }
 }

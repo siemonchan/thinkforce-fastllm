@@ -23,6 +23,11 @@
 #include "immintrin.h"
 #endif
 
+#ifdef __aarch64__
+#include <arm_neon.h>
+#include "armMath.h"
+#endif
+
 namespace fastllm {
     static void MySleep(int t) {
 #if defined(_WIN32) or defined(_WIN64)
@@ -159,6 +164,97 @@ namespace fastllm {
     static inline int I16Sum(const __m256i a) {
         int sum = I32sum(_mm256_madd_epi16(a, _mm256_set1_epi16(1)));
         return sum;
+    }
+#endif
+
+    static void convert_half_to_float(float *dst, uint16_t *src, size_t len) {
+        for (size_t i = 0; i < len; i++) {
+            dst[i] = half_to_float(src[i]);
+        }
+    }
+
+    static void convert_float_to_half(uint16_t *dst, float *src, size_t len) {
+        for (size_t i = 0; i < len; i++) {
+            dst[i] = float_to_half(src[i]);
+        }
+    }
+
+    static void convert_bf16_to_float(float *dst, uint16_t *src, size_t len) {
+        // todo
+    }
+
+    static void convert_float_to_bf16(uint16_t *dst, float *src, size_t len) {
+        // todo
+    }
+
+#ifdef __aarch64__
+    static inline void quantu8(int len, float quant_scale, uint8_t quant_zero, float *input, uint8_t *output) {
+        for (int i = 0; i < len % 8; i++) {
+            output[i] = (uint8_t) (std::min(255.0, std::max(input[i] / quant_scale + quant_zero + 0.5, 0.0)));
+        }
+        float *endp = input + len;
+        float *index = input + len % 8;
+        uint8_t *outindex = output + len % 8;
+        float scale[4];
+        float zero[4];
+        std::fill(scale, scale + 4, quant_scale);
+        std::fill(zero, zero + 4, (float) (quant_zero + 0.5));
+        float32x4_t scales = vld1q_f32(scale);
+        float32x4_t zeros = vld1q_f32(zero);
+        int32x4_t maxds = vcombine_s32(vcreate_s32(0x000000ff000000ff), vcreate_s32(0x000000ff000000ff));
+        int32x4_t minds = vcombine_s32(vcreate_s32(0x0000000000000000), vcreate_s32(0x0000000000000000));
+        for (; index != endp;) {
+            float32x4_t fin1 = vld1q_f32(index);
+            index += 4;
+            float32x4_t fin2 = vld1q_f32(index);
+            index += 4;
+            fin1 = vaddq_f32(vdivq_f32(fin1, scales), zeros);
+            fin2 = vaddq_f32(vdivq_f32(fin2, scales), zeros);
+            int32x4_t out1 = vcvtq_s32_f32(fin1);
+            int32x4_t out2 = vcvtq_s32_f32(fin2);
+            out1 = vmaxq_s32(out1, minds);
+            out1 = vminq_s32(out1, maxds);
+            out2 = vmaxq_s32(out2, minds);
+            out2 = vminq_s32(out2, maxds);
+            uint16x8_t out3 = vpaddq_u16(vreinterpretq_u16_s32(out1), vreinterpretq_u16_s32(out2));
+            uint8x8_t out = vmovn_u16(out3);
+            vst1_u8(outindex, out);
+            outindex += 8;
+        }
+    }
+
+    static inline void dequantu8(int len, float quant_scale, uint8_t quant_zeropoint, uint8_t *input, float *output) {
+        float scale[4];
+        uint8_t zero[8];
+        std::fill(scale, scale + 4, quant_scale);
+        std::fill(zero, zero + 8, quant_zeropoint);
+        float *endp = output + len;
+        float32x4_t scales;
+        uint8x8_t zeros;
+        zeros = vld1_u8(zero);
+        scales = vld1q_f32(scale);
+        for (int i = 0; i < len % 8; i++) {
+            output[i] = quant_scale * (input[i] - quant_zeropoint);
+        }
+        uint8_t *pin1 = input + len % 8;
+        float32_t *pout = output + len % 8;
+        for (; pout != endp;) {
+            uint8x8_t a = vld1_u8(pin1);
+            uint16x8_t result = vsubl_u8(a, zeros);
+            int16x8_t sresult = vreinterpretq_s16_u16(result);
+            int16x4_t result1 = vget_low_s16(sresult);
+            int16x4_t result2 = vget_high_s16(sresult);
+            int32x4_t result3 = vmovl_s16(result1);
+            int32x4_t result4 = vmovl_s16(result2);
+            float32x4_t out1 = vmulq_f32(scales, vcvtq_f32_s32(result3));
+            float32x4_t out2 = vmulq_f32(scales, vcvtq_f32_s32(result4));
+            vst1q_f32((pout), out1);
+            pout += 4;
+            vst1q_f32((pout), out2);
+            pout += 4;
+            pin1 += 8;
+
+        }
     }
 #endif
 }

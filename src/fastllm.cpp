@@ -417,6 +417,101 @@ namespace fastllm {
         }
     }
 
+    void Data::AsType(DataType targetType) {
+        if (targetType == dataType) {
+            return;
+        }
+
+        // 更新cpuData
+        DataType currentType = dataType;
+        uint8_t *currentData = cpuData;
+        dataType = targetType;
+        UpdateUnitSize();
+        MallocSpace(Count(0));
+
+        uint8_t *newData = cpuData;
+
+        // 数据类型转换
+        if (dataDevice == DataDevice::CPU) {
+            if (targetType == DataType::FLOAT32) {
+                if (currentType == DataType::FLOAT16) {
+                    convert_half_to_float((float *) newData, (uint16_t *) currentData, Count(0));
+                }
+                else if (currentType == DataType::BFLOAT16) {
+                    convert_bf16_to_float((float *) newData, (uint16_t *) currentData, Count(0));
+                }
+                else if (currentType == DataType::INT8) {
+                    
+                }
+                else {
+                    dataType = currentType;
+                    UpdateUnitSize();
+                    cpuData = currentData;
+                    currentData = newData;
+                    ErrorInFastLLM("unsupported type conversion.\n");
+                }
+            }
+            else if (targetType == DataType::FLOAT16) {
+                if (currentType == DataType::FLOAT32) {
+                    convert_float_to_half((uint16_t *) newData, (float *) currentData, Count(0));
+                }
+                else if (currentType == DataType::FLOAT16) {
+
+                }
+                else if (currentType == DataType::INT8) {
+
+                }
+                else {
+                    dataType = currentType;
+                    UpdateUnitSize();
+                    cpuData = currentData;
+                    currentData = newData;
+                    ErrorInFastLLM("unsupported type conversion.\n");
+                }
+            }
+            else if (targetType == DataType::BFLOAT16) {
+                if (currentType == DataType::FLOAT32) {
+                    convert_float_to_bf16((uint16_t *) newData, (float *) currentData, Count(0));
+                }
+                if (currentType == DataType::FLOAT16) {
+                    auto temp = new float[Count(0)];
+                    convert_half_to_float((float *) temp, (uint16_t *) currentData, Count(0));
+                    convert_float_to_bf16((uint16_t *) newData, (float *) temp, Count(0));
+                    delete temp;
+                }
+            }
+            else if (targetType == DataType::INT8) {
+                if (currentType == DataType::FLOAT32) {
+
+                }
+                else if (currentType == DataType::FLOAT16) {
+
+                }
+                else {
+                    dataType = currentType;
+                    UpdateUnitSize();
+                    cpuData = currentData;
+                    currentData = newData;
+                    ErrorInFastLLM("unsupported type conversion.\n");
+                }
+            }
+            else {
+                dataType = currentType;
+                UpdateUnitSize();
+                cpuData = currentData;
+                currentData = newData;
+                ErrorInFastLLM("unsupported type conversion.\n");
+            }
+
+            delete[] currentData;
+        } 
+#ifdef USE_CUDA
+        if (dataDevice == DataDevice::CUDA) {
+            FastllmCudaConvertDataType(newData, currentData, targetType, currentType, Count(0));
+        }
+#endif
+    }
+
     void Data::Expansion(const std::vector<int> &dims) {
         if (this->dims.size() == 0) {
             this->strides.resize(dims.size(), 1);
@@ -560,7 +655,16 @@ namespace fastllm {
         if (this->weightSum.size() > 0) {
             return;
         }
-        int n = this->dims[0], m = this->dims[1];
+        int n, m;
+        if (dims.size() == 2) {
+            // for linear
+            n = this->dims[0];
+            m = this->dims[1];
+        } else if (dims.size() == 4) {
+            // for convolution 2d
+            n = this->dims[0];
+            m = this->Count(1);
+        }
         if (this->dataType == DataType::INT8) {
             weightSum.resize(n);
             for (int i = 0; i < n; i++) {
@@ -816,7 +920,7 @@ namespace fastllm {
         if (this->type == TokenizerType::BPE || this->type == Tokenizer::GPT2) {
             std::string blank = "", s = "";
             if (this->type == Tokenizer::BPE) {
-            blank += 226, blank += 150, blank += 129;
+                blank += 226, blank += 150, blank += 129;
                 s = blank;
             } else if (this->type == Tokenizer::GPT2) {
                 blank += 196, blank += 160;
@@ -1027,6 +1131,62 @@ namespace fastllm {
                 }
             }
             return Data (DataType::FLOAT32, {1, (int)v.size()}, v);
+        } else if (this->type == TokenizerType::CLIP) {
+            std::string blank = "", s = "";
+            blank += 60, blank += 47, blank += 119, blank += 62;
+            
+            if (15 < ori.size() && ori.substr(0, 15) == "<FLM_FIX_TOKEN_") {
+                s = "";
+            }
+            for (int i = 0; i < ori.size(); i++) {
+                if (ori[i] == ' ') {
+                    if (i != 0 && ori[i - 1] != ' ') {
+                        s += blank;
+                    }
+                } else if (i && i + 15 < ori.size() && ori.substr(i, 15) == "<FLM_FIX_TOKEN_") {
+                    s += blank;
+                    s += ori[i];
+                } else {
+                    s += ori[i];
+                }
+            }
+
+            std::vector <float> v;
+            for (int i = 0; i < s.size(); i++) {
+                if (i + 3 < s.size() && s[i] == '<' && s[i + 1] == 'F' && s[i + 2] == 'L' && s[i + 3] == 'M') {
+                    if (i + 15 < s.size() && s.substr(i, 15) == "<FLM_FIX_TOKEN_") {
+                        i += 15;
+                        int now = 0;
+                        while (s[i] >= '0' && s[i] <= '9') {
+                            now = now * 10 + s[i] - '0';
+                            i++;
+                        }
+                        v.push_back(now);
+                        continue;
+                    }
+                }
+
+                int tokenId = -999999, pos = i - 1;
+                TrieNode *now = this->root;
+                for (int j = i; j < s.size(); j++) {
+                    int cur = s[j];
+                    if (now->next.find(s[j]) != now->next.end()) {
+                        now = now->next[s[j]];
+                        if (now->tokenId != -999999) {
+                            tokenId = now->tokenId;
+                            pos = j;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                if (pos >= i) {
+                    i = pos;
+                    v.push_back(tokenId);
+                }
+            }
+
+            return Data (DataType::FLOAT32, {1, (int)v.size()}, v);
         } else {
             std::vector <float> v;
             for (int i = 0; i < ori.size(); i++) {
@@ -1074,13 +1234,13 @@ namespace fastllm {
                 }
                 switch (tokens[i]) {
                     case 202:
-                    ret += "\t";
+                        ret += "\t";
                         break;
                     case 203:
-                    ret += "\n";
+                        ret += "\n";
                         break;
                     case 284:
-                    ret += "\n    ";
+                        ret += "\n    ";
                         break;
                     case 291:
                         ret += "\n       ";
@@ -1089,22 +1249,22 @@ namespace fastllm {
                         ret += "\n ";
                         break;
                     case 355:
-                    ret += "\n\t\t";
+                        ret += "\n\t\t";
                         break;
                     case 357:
-                    ret += "\n\t";
+                        ret += "\n\t";
                         break;
                     case 397:
                         ret += "\n     ";
                         break;
                     case 478:
-                    ret += "\n\n";
+                        ret += "\n\n";
                         break;
                     case 603:
-                    ret += "\n\t\t\t";
+                        ret += "\n\t\t\t";
                         break;
                     default:
-                    ret += s;
+                        ret += s;   
                 }
             }
 
@@ -1117,44 +1277,44 @@ namespace fastllm {
                 else break;
             }
         } else {
-        for (int i = 0; i < tokens.size(); i++) {
-            std::string s = tokenToStringDict[tokens[i]];
-            if (s.size() == 6 && s.substr(0, 3) == "<0x" && s.back() == '>') {
-                int c = 0;
-                for (int i = 3; i < 5; i++) {
-                    c *= 16;
-                    if (s[i] >= '0' && s[i] <= '9') {
-                        c += (s[i] - '0');
-                    } else {
-                        c += (s[i] - 'A' + 10);
+            for (int i = 0; i < tokens.size(); i++) {
+                std::string s = tokenToStringDict[tokens[i]];
+                if (s.size() == 6 && s.substr(0, 3) == "<0x" && s.back() == '>') {
+                    int c = 0;
+                    for (int i = 3; i < 5; i++) {
+                        c *= 16;
+                        if (s[i] >= '0' && s[i] <= '9') {
+                            c += (s[i] - '0');
+                        } else {
+                            c += (s[i] - 'A' + 10);
+                        }
                     }
+
+                    s = " ";
+                    s[0] = c;
                 }
-
-                s = " ";
-                s[0] = c;
+                if (s == "<n>") {
+                    ret += "\n";
+                } else if (s == "<|tab|>") {
+                    ret += "\t";
+                } else {
+                    ret += s;
+                }
             }
-            if (s == "<n>") {
-                ret += "\n";
-            } else if (s == "<|tab|>") {
-                ret += "\t";
-            } else {
-                ret += s;
-            }
-        }
 
-        std::string blank = "";
-        blank += 226, blank += 150, blank += 129;
-        while (true) {
-            std::string::size_type pos(0);
-            if ((pos = ret.find(blank)) != std::string::npos)
-                ret.replace(pos, blank.length(), " ");
-            else break;
-        }
-        int pos = ret.find("<|blank_");
-        if (pos != -1) {
-            int space_num = atoi(ret.substr(8, ret.size() - 10).c_str());
-            return std::string(space_num, ' ');
-        }
+            std::string blank = "";
+            blank += 226, blank += 150, blank += 129;
+            while (true) {
+                std::string::size_type pos(0);
+                if ((pos = ret.find(blank)) != std::string::npos)
+                    ret.replace(pos, blank.length(), " ");
+                else break;
+            }
+            int pos = ret.find("<|blank_");
+            if (pos != -1) {
+                int space_num = atoi(ret.substr(8, ret.size() - 10).c_str());
+                return std::string(space_num, ' ');
+            }    
         }
         return ret;
     }
@@ -1709,10 +1869,28 @@ namespace fastllm {
         }, {}, {{"axis", axis}});
     }
 
+    void GroupNorm(Data &input, Data &gamma, Data &beta, int group, Data &output) {
+        curExecutor->Run("GroupNorm", {
+            {"input", &input}, {"gamma", &gamma}, {"beta", &beta}, {"output", &output}
+        }, {}, {{"group", group}});
+    }
+
     void Linear(Data &input, Data &weight, const Data &bias, Data &output) {
         curExecutor->Run("Linear", {
                 {"input", &input}, {"weight", &weight}, {"bias", (Data*)&bias}, {"output", &output}
         }, {}, {});
+    }
+
+    void Conv2d(Data &input, Data &weight, Data &bias, Data &output, int stride, int padding, int dilation, int group) {
+        curExecutor->Run("Conv2d", {
+            {"input", &input}, {"weight", &weight}, {"bias", &bias}, {"output", &output}
+        }, {}, {{"stride", stride}, {"padding", padding}, {"dilation", dilation}, {"group", group}});
+    }
+
+    void Interpolate(Data &input, Data &output, float scale, int mode, int alignCorner) {
+        curExecutor->Run("Interpolate", {
+            {"input", &input}, {"output", &output}
+        }, {{"scale", scale}}, {{"mode", mode}, {"alignCorner", alignCorner}});
     }
 
     void Split(const Data &input, int axis, int start, int end, Data &output) {
@@ -1779,6 +1957,12 @@ namespace fastllm {
         curExecutor->Run("MulTo", {
                 {"input0", &input0}, {"input1", (Data*)&input1}
         }, {}, {});
+    }
+
+    void Scaling(Data &input, float v) {
+        curExecutor->Run("Scaling", {
+            {"input", &input}
+        }, {{"v", v}}, {});
     }
 
     void AddTo(Data &input0, const Data &input1, float alpha) {
@@ -1858,6 +2042,48 @@ namespace fastllm {
     void ApplyLognAttn(Data &input, const Data &lognAttn, const Data &positionIds) {
         curExecutor->Run("ApplyLognAttn", {
             {"input", &input}, {"lognAttn", (Data *) &lognAttn}, {"positionIds", (Data *) &positionIds}
+        }, {}, {});
+    }
+
+    void Linspace(Data &data, float start, float end, int steps) {
+        curExecutor->Run("Linspace", {
+            {"data", &data}
+        }, {{"start", start}, {"end", end}}, {{"steps", steps}});
+    }
+
+    void Pow(Data &data, float p) {
+        curExecutor->Run("Pow", {
+            {"data", &data}
+        }, {{"p", p}}, {});
+    }
+
+    void CumProd(const Data &input, Data &output, int axis) {
+        curExecutor->Run("CumProd", {
+            {"input", (Data *) &input}, {"output", &output}
+        }, {}, {{"axis", axis}});
+    }
+
+    void Unique(Data &data) {
+        curExecutor->Run("Unique", {
+            {"data", &data}
+        }, {}, {});
+    }
+
+    void Randn(Data &data) {
+        curExecutor->Run("Randn", {
+            {"data", &data}
+        }, {}, {});
+    }
+
+    void QuantizeInt8(Data &input, Data &output) {
+        curExecutor->Run("QuantizeInt8", {
+            {"input", &input}, {"output", &output}
+        }, {}, {});
+    }
+
+    void DequantizeInt8(Data &input, Data &output) {
+        curExecutor->Run("DequantizeInt8", {
+            {"input", &input}, {"output", &output}
         }, {}, {});
     }
 

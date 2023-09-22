@@ -62,6 +62,13 @@ inline void ConfigureKMRound(int k, int m, int cores, int *_per_k, int *_per_m, 
     int k_round = (k - 1) / per_k + 1;
     int per_m_lower_limit = 1024;
     int per_k_lower_limit = 1024;
+    if (m <= per_m_lower_limit && k <= per_k_lower_limit) {
+        *_per_m = m;
+        *_per_k = k;
+        *_m_round = 1;
+        *_k_round = 1;
+        return;
+    }
 
     // 粗略缩放，按照2倍递减
     while (m_round * k_round <= cores && per_m / 2 >= per_m_lower_limit && per_k / 2 >= per_k_lower_limit) {
@@ -208,7 +215,7 @@ void FastllmTfaccQuantization(uint8_t *dst, uint16_t *src, int len, int round, i
 
 void FastllmTfaccInitBlasop() {
     if (FastllmTfaccBlasopCache.empty()) {
-        int maxCmdNum = 60000;
+        int maxCmdNum = 512 * 1024;
         int total_cores = 8 * TF_TFNN_GetChipNum();
         for (int i = 0; i < total_cores; i++) {
             FastllmTfaccBlasopCache.push_back(new tfacc40t::BlasopList(TF_TFNN_GetChipId(i), maxCmdNum));
@@ -1236,6 +1243,7 @@ void FastllmTfaccConv2DUint8WFloat32D(float *input, float *output, uint8_t *weig
                                       int kernel, int stride, int padding, int dilation, int group,
                                       tfdl::PerChannelConfig tfWeightConfig, fastllm::ThreadPool *pool) {
     // collect all available tfacc cores
+    auto t0 = chrono::system_clock::now();
     std::vector<int> all_tfacc = ConfigureTFACC(fastllm::GetThreads(), TF_TFNN_GetChipNum());
 
     if (batch > all_tfacc.size()) {
@@ -1255,7 +1263,7 @@ void FastllmTfaccConv2DUint8WFloat32D(float *input, float *output, uint8_t *weig
 
     int per_oc = outputChannel / (all_tfacc.size() / batch);
     int oc_round;
-    if (per_oc == 0) {
+    if (per_oc < 8) {
         per_oc = outputChannel;
         oc_round = 1;
     } else {
@@ -1273,8 +1281,8 @@ void FastllmTfaccConv2DUint8WFloat32D(float *input, float *output, uint8_t *weig
             outputChannel, inputChannel, kernel, kernel, stride, padding,
             batch, outputChannel, outputHeight, outputWidth);
 
-        for (int i = 0; i < batch; i++) {
-            for (int oc_iter = 0; oc_iter < oc_round; oc_iter++) {
+        for (int oc_iter = 0; oc_iter < oc_round; oc_iter++) {
+            for (int i = 0; i < batch; i++) {
                 int cur_oc = min(per_oc, outputChannel - oc_iter * per_oc);
 
                 uint8_t *cur_weight = weight + (oc_iter * per_oc) * (inputChannel / group) * kernel * kernel;
@@ -1303,8 +1311,8 @@ void FastllmTfaccConv2DUint8WFloat32D(float *input, float *output, uint8_t *weig
     
     // prepare output
     std::vector<tfdl::TFDataFloat *> temp_output;
-    for (int i = 0; i < batch; i++) {
-        for (int oc_iter = 0; oc_iter < oc_round; oc_iter++) {
+    for (int oc_iter = 0; oc_iter < oc_round; oc_iter++) {
+        for (int i = 0; i < batch; i++) {
             int cur_oc = min(per_oc, outputChannel - oc_iter * per_oc);
 
             float *cur_output = output + (i * outputChannel + oc_iter * per_oc) * outputHeight * outputWidth;
@@ -1312,23 +1320,26 @@ void FastllmTfaccConv2DUint8WFloat32D(float *input, float *output, uint8_t *weig
         }
     }
 
+    auto t1 = chrono::system_clock::now();
+
     // run with tfacc
     vector<future<void>> futures;
-    for (int i = 0; i < batch; i++) {
-        for (int oc_iter = 0; oc_iter < oc_round; oc_iter++) {
+    for (int oc_iter = 0; oc_iter < oc_round; oc_iter++) {
+        for (int i = 0; i < batch; i++) {
             int cur_oc = min(per_oc, outputChannel - oc_iter * per_oc);
 
             tfdl::TFDataInt8 *cur_input = temp_input[i];
-            tfdl::TFDataFloat *cur_output = temp_output[i * oc_round + oc_iter];
-            tfdl::TFDataInt8 *cur_weight = (tfdl::TFDataInt8 *) FastllmTfaccWeightMap[weight_key][i * oc_round + oc_iter];
+            tfdl::TFDataFloat *cur_output = temp_output[oc_iter * batch + i];
+            tfdl::TFDataInt8 *cur_weight = (tfdl::TFDataInt8 *) FastllmTfaccWeightMap[weight_key][oc_iter * batch + i];
             tfdl::TFDataFloat *cur_bias = temp_bias[oc_iter];
-            int cur_core = all_tfacc[(i * oc_round + oc_iter) % all_tfacc.size()];
+            int cur_core = all_tfacc[(oc_iter * batch + i) % all_tfacc.size()];
             auto cur_blasop = FastllmTfaccBlasopCache[cur_core];
+            // void *cur_blasop = nullptr;
             futures.push_back(pool->Submit(tfacc40t::Convolution, cur_input, cur_output, cur_weight, cur_bias,
                                            cur_oc, kernel, kernel, stride, stride, group, padding, padding, padding, padding,
                                            dilation, dilation, false, cur_core, cur_blasop));
             
-            if ((i * oc_round + oc_iter + 1) % all_tfacc.size() == 0) {
+            if ((oc_iter * batch + i + 1) % all_tfacc.size() == 0) {
                 for (auto &one_future : futures) {
                     one_future.get();
                 }
@@ -1336,6 +1347,9 @@ void FastllmTfaccConv2DUint8WFloat32D(float *input, float *output, uint8_t *weig
             }
         }
     }
+
+    auto t2 = chrono::system_clock::now();
+
     for (auto &one_future : futures) {
         one_future.get();
     }
@@ -1360,4 +1374,13 @@ void FastllmTfaccConv2DUint8WFloat32D(float *input, float *output, uint8_t *weig
     for (int tfacc : all_tfacc) {
         FastllmTfaccBlasopCache[tfacc]->Clear();
     }
+    auto t3 = chrono::system_clock::now();
+    // printf("multicore conv2d [%d, %d, %d, %d] * [%d, %d, %d, %d], s %d , p %d, -> [%d, %d, %d, %d]\n",
+    //         batch, inputChannel, inputHeight, inputWidth, 
+    //         outputChannel, inputChannel, kernel, kernel, stride, padding,
+    //         batch, outputChannel, outputHeight, outputWidth);
+    // printf("Cores: %d, Gops: %.2f, time: prepare: %.2fms; run blasop: %.2fms, postprocess: %.2fms\n", 
+    //        all_tfacc.size(), 
+    //        ((double) batch * outputChannel * inputChannel * outputHeight * outputWidth * kernel * kernel / group * 2. / 1000. / 1000. / 1000.) / GetSpan(t0, t3),
+    //        GetSpan(t0, t1) * 1000, GetSpan(t1, t2) * 1000, GetSpan(t2, t3) * 1000);
 }

@@ -1906,7 +1906,7 @@ namespace fastllm {
         int outputChannel = output.dims[1];
         int outputHeight = output.dims[2];
         int outputWidth = output.dims[3];
-        return (long long int) batch * outputChannel * inputChannel * outputHeight * outputWidth * kernel * kernel / group;
+        return (long long int) batch * outputChannel * inputChannel * outputHeight * outputWidth * kernel * kernel / group * 2;
     }
 
     void CpuInterpolateOp::Reshape(const std::string &opType, const DataDict &datas, 
@@ -3664,6 +3664,126 @@ namespace fastllm {
 
         for (int i = 0; i < len; i++) {
             ((float *) data.cpuData)[i] = dist(generator);
+        }
+    }
+
+    void QuantizeInt8Single(float *src, uint8_t *dst, int st, int end, const LowBitConfig &config) {
+#ifdef __aarch64__
+        quantu8(end - st, config.scale, config.zeroPoint, src + st, dst + st);
+#else
+        for (int i = st; i < end; i++) {
+            dst[i] = config.quantization(src[i]);
+        }
+#endif
+    }
+
+    void DequantizeInt8Single(uint8_t *src, float *dst, int st, int end, const LowBitConfig &config) {
+#ifdef __aarch64__
+        dequantu8(end - st, config.scale, config.zeroPoint, src + st, dst + st);
+#else
+        for (int i = st; i < end; i++) {
+            dst[i] = config.invQuantization(src[i]);
+        }
+#endif        
+    }
+
+    void CpuQuantizeInt8Op::Reshape(const std::string &opType, const DataDict &datas, 
+                                    const FloatDict &floatParams, const IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+
+        AssertInFastLLM(input.dataType == DataType::FLOAT32, "QuantizeInt8 op only support float32 input.\n");
+
+        output.Resize(input.dims);
+        output.dataType = DataType::INT8;
+    }
+
+    void CpuQuantizeInt8Op::Run(const std::string &opType, const DataDict &datas, 
+                                const FloatDict &floatParams, const IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+
+        float *inputData = (float *) input.cpuData;
+        uint8_t *outputData = (uint8_t *) output.cpuData;
+
+        int len = input.Count(0);
+        output.Allocate();
+
+        float minValue = inputData[0];
+        float maxValue = inputData[0];
+        int i = 0;
+#ifdef __aarch64__
+        float32x4_t minValuex4 = vdupq_n_f32(minValue);
+        float32x4_t maxValuex4 = vdupq_n_f32(maxValue);
+        for (; i + 3 < len; i += 4) {
+            minValuex4 = vminq_f32(minValuex4, vld1q_f32(inputData + i));
+            maxValuex4 = vmaxq_f32(maxValuex4, vld1q_f32(inputData + i));
+        }
+        for (int j = 0; j < 4; j++) {
+            minValue = std::min(minValue, minValuex4[j]);
+            maxValue = std::max(maxValue, maxValuex4[j]);
+        }
+#endif
+        for (; i < len; i++) {
+            minValue = std::min(minValue, inputData[i]);
+            maxValue = std::max(maxValue, inputData[i]);
+        }
+
+        auto config = LowBitConfig(minValue, maxValue, 8, 0);
+        output.perChannelsConfigs.push_back(config);
+
+        int threadNum = GetThreads();
+        auto pool = GetPool();
+        int per = len / threadNum;
+
+        std::vector<future<void>> futures;
+        for (int id = 0; id < threadNum - 1; id++) {
+            int st = id * per;
+            int end = st + per;
+            futures.push_back(pool->Submit(QuantizeInt8Single, inputData, outputData, st, end, config));
+        }
+        QuantizeInt8Single(inputData, outputData, per * (threadNum - 1), len, config);
+        for (int o = 0; o < futures.size(); o++) {
+            futures[o].get();
+        }
+    }
+
+    void CpuDequantizeInt8Op::Reshape(const std::string &opType, const DataDict &datas, 
+                                      const FloatDict &floatParams, const IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+
+        AssertInFastLLM(input.dataType == DataType::INT8, "DequantizeInt8 op only support int8 input.\n");
+
+        output.Resize(input.dims);
+        output.dataType = DataType::FLOAT32;
+    }
+
+    void CpuDequantizeInt8Op::Run(const std::string &opType, const DataDict &datas, 
+                                  const FloatDict &floatParams, const IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+
+        uint8_t *inputData = (uint8_t *) input.cpuData;
+        float *outputData = (float *) output.cpuData;
+
+        int len = input.Count(0);
+        output.Allocate();
+
+        auto config = input.perChannelsConfigs[0];
+        int threadNum = GetThreads();
+        auto pool = GetPool();
+        int per = len / threadNum;
+
+        std::vector<future<void>> futures;
+        for (int id = 0; id < threadNum - 1; id++) {
+            int st = id * per;
+            int end = st + per;
+            futures.push_back(pool->Submit(DequantizeInt8Single, inputData, outputData, st, end, config));
+        }
+        DequantizeInt8Single(inputData, outputData, per * (threadNum - 1), len, config);
+        for (int o = 0; o < futures.size(); o++) {
+            futures[o].get();
         }
     }
 }

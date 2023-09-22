@@ -276,6 +276,8 @@ namespace fastllm {
 
         void Allocate(float v); // 分配内存并初始化
 
+        void AsType(DataType targetType);
+
         void Expansion(const std::vector <int> &dims); // 预扩容到相应尺寸
 
         void MallocSpace(uint64_t size); // 在设备上分配
@@ -314,7 +316,8 @@ namespace fastllm {
             BPE = 0,
             NORMAL = 1,
             QWEN = 2,
-            GPT2 = 3
+            GPT2 = 3,
+            CLIP = 4,
         };
 
         struct TrieNode {
@@ -437,7 +440,13 @@ namespace fastllm {
 
     void LayerNorm(Data &input, Data &gamma, Data &beta, int axis, Data &output);
 
+    void GroupNorm(Data &input, Data &gamma, Data &beta, int group, Data &output);
+
     void Linear(Data &input, Data &weight, const Data &bias, Data &output);
+
+    void Conv2d(Data &input, Data &weight, Data &bias, Data &output, int stride = 1, int padding = 0, int dilation = 1, int group = 1);
+
+    void Interpolate(Data &input, Data &output, float scale, int mode, int alignCorner); // mode: 0: bilinear, 1: nearest
 
     void Split(const Data &input, int axis, int start, int end, Data &output);
 
@@ -460,6 +469,8 @@ namespace fastllm {
     void Mul(const Data &input, float v, Data &output);
 
     void MulTo(Data &input0, const Data &input1); // input0 *= input1
+
+    void Scaling(Data &input, float v); // input *= v
 
     void AddTo(Data &input0, const Data &input1, float alpha = 1.0); // input0 += input1 * alpha
 
@@ -484,6 +495,20 @@ namespace fastllm {
     void RepeatKV(Data &input, int num_key_value_groups);
 
     void ApplyLognAttn(Data &input, const Data &lognAttn, const Data &positionIds);
+
+    void Linspace(Data &data, float start, float end, int steps);
+
+    void Pow(Data &data, float p);
+
+    void CumProd(const Data &input, Data &output, int axis);
+
+    void Unique(Data &data);
+
+    void Randn(Data &data);
+
+    void QuantizeInt8(Data &input, Data &output);
+
+    void DequantizeInt8(Data &input, Data &output);
 
     void MulBatch(std::vector <Data*> &input, float v, std::vector <Data*> &output);
 
