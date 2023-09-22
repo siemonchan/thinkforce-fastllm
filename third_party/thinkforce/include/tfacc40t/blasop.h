@@ -22,6 +22,7 @@ namespace tfacc40t {
         int len; // 命令字队列当前的命令字条数
         int width; // 命令字队列单条命令的字节宽度
         MEM_U8 *data; // 命令字队列中存放命令字的地址
+        std::vector<int> breakPoint; // 命令字队列可以被拆分的断点
 
         BlasopList (int chipId, int cap, int width = 32); // 创建最大容纳cap条命令字的命令字队列
         ~BlasopList (); // 析构

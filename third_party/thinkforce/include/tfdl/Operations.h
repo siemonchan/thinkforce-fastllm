@@ -61,12 +61,40 @@ namespace tfacc40t {
 #ifdef  USE_TFACC40T
     static std::mutex thread_lock;
 
+    /// 用于管理和记录已生成的命令字
+    class BlasopCache {
+    public:
+        BlasopCache() {
+            cache.resize(MAXCHIPNUM * 8);
+            vitality.resize(MAXCHIPNUM * 8);
+            capacity.resize(MAXCHIPNUM * 8, 0);
+        }
+
+        bool Found(int deviceId, long long int key);
+
+        long long int GetLeastActiveCache(int deviceId);
+
+        vector<BlasopList *> GetBlasopLists(int deviceId, long long int key);
+
+        void InsertBlasopLists(int deviceId, long long int key, vector<BlasopList *> blasopLists);
+
+        void DeleteBlasopLists(int deviceId, long long int key);
+    private:
+        const int max_capacity = 4194304; // 每个core上允许存储的最大命令字条数
+
+        vector<map<long long int, vector<tfacc40t::BlasopList *>>> cache; // {key, blasop}[cores]
+        vector<map<long long int, int>> vitality;
+        vector<int> capacity;
+    };
+
     static map<long long int, tfacc40t::MEM_U8 *> tfacc40t_weight_map[MAXCHIPNUM];
     static map<long long int, tfacc40t::MEM_U8 *> tfacc40t_bias_map[MAXCHIPNUM];
     static map<long long int, vector<vector<float>>> tfacc40t_weight_sum[MAXCHIPNUM];
     static map<long long int, tfdl::PerChannelConfig> tfacc40t_weight_config[MAXCHIPNUM];
-
     static vector<pair<bool, tfacc40t::MEM_U8 *>> tfacc40t_data_pool[8 * MAXCHIPNUM];
+    static BlasopCache tfacc40t_blasop_cache;
+
+    long long int GetConvolutionBlasopCacheKey(const tfacc40t::ConvolutionLayer &convolutionLayer);
 
     template<typename T>
     tfacc40t::Memory<T> *MallocDeviceMemory(int requiredSize, int deviceId);
@@ -90,21 +118,10 @@ namespace tfacc40t {
     template<typename T>
     void InvalidCache(tfacc40t::BlasopList *blasopList, tfacc40t::Memory<T> *mem, int type);
 #endif
-
-    void Convolution(tfdl::TFDataInt8 *input, tfdl::TFDataInt8 *output, tfdl::TFDataInt8 *weight, tfdl::TFDataInt8 *bias,
-                     int deviceId, int outputChannels, int kernel, int stride, bool relu);
-
-    void Convolution(tfdl::TFDataInt8 *input, tfdl::TFDataInt8 *output, tfdl::TFDataInt8 *weight, tfdl::TFDataInt8 *bias,
-                     int deviceId, int outputChannels, int group, int kernelH, int kernelW, int strideH, int strideW,
-                     int padHBegin, int padHEnd, int padWBegin, int padWEnd, int dilationH, int dilationW, bool relu);
-
-    void Convolution(tfdl::TFDataInt8 *input, tfdl::TFDataInt8 *output, tfdl::TFDataInt8 *weight, tfdl::TFDataInt8 *bias,
-                     int deviceId, int outputChannels, int group, int kernelH, int kernelW, int strideH, int strideW,
-                     int padH, int padW, int dilationH, int dilationW, bool relu);
-
-    void Convolution(tfdl::TFDataFloat *input, tfdl::TFDataFloat *output, tfdl::TFDataFloat *weight, tfdl::TFDataFloat *bias,
-                     int deviceId, int outputChannels, int group, int kernelH, int kernelW, int strideH, int strideW,
-                     int padHBegin, int padHEnd, int padWBegin, int padWEnd, int dilationH, int dilationW, bool relu);
+    void Convolution(tfdl::TFData *input, tfdl::TFData *output, tfdl::TFData *weight, tfdl::TFData *bias,
+                     int outputChannels, int kernelH, int kernelW, int strideH, int strideW, int group,
+                     int padHBegin, int padHEnd, int padWBegin, int padWEnd, int dilationH, int dilationW,
+                     bool relu, int deviceId, void *blasopCache = nullptr);
 
     void InnerProduct(tfdl::TFData *input, tfdl::TFData *output, tfdl::TFData *weight, tfdl::TFData *bias,
                       int deviceId, void *blasopCache = nullptr);

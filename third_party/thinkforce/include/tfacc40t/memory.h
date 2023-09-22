@@ -18,6 +18,7 @@ namespace tfacc40t {
         uint64_t size; // 元素数
         volatile T *userAddr; // 虚拟地址
         uint64_t phyAddr; // 物理地址
+        bool duplicate;
 
         Memory() {}
 
@@ -31,6 +32,8 @@ namespace tfacc40t {
 
         // 返回高位地址
         uint32_t HighAddr();
+
+        Memory *Duplicate();
     };
 
     typedef Memory <uint8_t> MEM_U8;
