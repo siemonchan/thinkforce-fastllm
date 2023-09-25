@@ -372,7 +372,11 @@ namespace fastllm {
             this->cpuData = new uint8_t[this->expansionBytes];
         } else if (this->dataDevice == DataDevice::CUDA) {
 #ifdef USE_CUDA
-            this->cudaData = FastllmCudaMalloc(this->expansionBytes);
+            if (this->directMemory) {
+                this->cudaData = FastllmCudaDirectMalloc(this->expansionBytes);
+            } else {
+                this->cudaData = FastllmCudaMalloc(this->expansionBytes);
+            }
 #else
             ErrorInFastLLM("Error: cuda is not supported.\n");
 #endif
@@ -386,7 +390,11 @@ namespace fastllm {
             delete[] this->cpuData;
         } else if (this->dataDevice == DataDevice::CUDA) {
 #ifdef USE_CUDA
-            FastllmCudaFree(this->cudaData);
+            if (this->directMemory) {
+                FastllmCudaDirectFree(this->cudaData);
+            } else {
+                FastllmCudaFree(this->cudaData);
+            }
 #else
             ErrorInFastLLM("Error: cuda is not supported.\n");
 #endif
@@ -514,6 +522,7 @@ namespace fastllm {
 
     void Data::Expansion(const std::vector<int> &dims) {
         if (this->dims.size() == 0) {
+            this->directMemory = true;
             this->strides.resize(dims.size(), 1);
             this->strides.back() = 1;
             for (int i = dims.size() - 2; i >= 0; i--) {
@@ -588,6 +597,11 @@ namespace fastllm {
 #ifdef USE_CUDA
         if (this->cudaData != nullptr) {
             FastllmCudaFree(this->cudaData);
+            /*if (this->directMemory) {
+                FastllmCudaDirectFree(this->cudaData);
+            } else {
+                FastllmCudaFree(this->cudaData);
+            }*/
         }
 #endif
     }
@@ -1843,6 +1857,14 @@ namespace fastllm {
         }
     }
 
+    void CopyKVCache(Data &oldCache, Data &newCache, int oldBsStart, int newBsStart, int bs, int offset) {
+        curExecutor->Run("CopyKVCache", {
+                {"oldCache", (Data*)&oldCache}, {"newCache", (Data*)&newCache}
+        }, {}, {
+            {"oldBsStart", oldBsStart}, {"newBsStart", newBsStart}, {"bs", bs}, {"offset", offset}
+        });
+    }
+
     void Attention(const Data &q, const Data &k, const Data &v, const Data &mask, Data &output,
                    int group, float scale, int attentionType) {
         curExecutor->Run("Attention", {
@@ -2133,6 +2155,21 @@ namespace fastllm {
         curExecutor->Run("CatDirectBatch", {
                 {"input0", (Data*)input0.data()}, {"input1", (Data*)input1.data()}
         }, {}, {{"axis", axis}, {"input0___batch", (int)input0.size()}, {"input1___batch", (int)input1.size()}});
+    }
+
+    void AttentionBatch(std::vector <Data*> &q, std::vector <Data*> &k, std::vector <Data*> &v,
+                        std::vector <Data*> &mask, std::vector <Data*> &output,
+                        int group, float scale, int attentionType) {
+        curExecutor->Run("AttentionBatch", {
+                {"q", (Data*)q.data()}, {"k", (Data*)k.data()}, {"v", (Data*)v.data()},
+                {"mask", (Data*)mask.data()}, {"output", (Data*)output.data()}
+        },
+        {{"scale", scale}},
+        {
+            {"group", group},
+            {"q___batch", (int)q.size()}, {"k___batch", (int)k.size()}, {"v___batch", (int)v.size()},
+            {"mask___batch", (int)mask.size()}, {"output___batch", (int)output.size()}
+        });
     }
 
     void LoraLayer(Data &input, Data &weight, Data &loraA, Data &loraB, const Data &bias, Data &output, 

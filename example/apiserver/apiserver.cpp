@@ -128,6 +128,8 @@ struct APIConfig {
     int threads = 4; // 使用的线程数
     bool lowMemMode = false; // 是否使用低内存模式
     int port = 8080; // 端口号
+    int tokens = -1; // token容量限制
+    int batch = 256; // batch数限制
 };
 
 void ToNext(char * &cur, const std::string &target, std::string &v) {
@@ -178,13 +180,40 @@ struct HttpRequest {
         }
     }
 
+    bool IsValid (char *buffer, int size) {
+        char *old = buffer;
+        headers.clear();
+        ToNext(buffer, " ", method);
+        ToNext(buffer, " ", route);
+        ToNext(buffer, "\r\n", type);
+        while (true) {
+            if (buffer[0] == 0 || ((long long)(buffer - old)) > 1024 * 1024) {
+                break;
+            }
+            if (buffer[0] == '\r' && buffer[1] == '\n') {
+                if (headers.find("Content-Length") != headers.end()) {
+                    if (size - ((long long)(buffer - old)) - 2 >= atoi(headers["Content-Length"].c_str())) {
+                        return true;
+                    } else {
+                        return false;
+                    }
+                }
+            } else {
+                std::string key;
+                ToNext(buffer, ":", key);
+                ToNext(buffer, "\r\n", headers[key]);
+            }
+        }
+        return false;
+    }
+
     void Print() {
         for (auto &it : headers) {
             printf("%s: %s\n", it.first.c_str(), it.second.c_str());
         }
         printf("body: %s\n", body.c_str());
     }
-};
+} httpChecker;
 
 struct WorkNode {
     int client;
@@ -201,7 +230,7 @@ struct WorkNode {
 
 struct WorkQueue {
     std::unique_ptr<fastllm::basellm> model;
-    int maxActivateQueryNumber = 128;
+    int maxActivateQueryNumber = 256;
     int activateQueryNumber = 0;
     int totalQueryNumber = 0;
     std::mutex locker;
@@ -234,10 +263,12 @@ struct WorkQueue {
                     WorkNode *now = ts->q.front();
                     ts->q.pop();
                     ts->activateQueryNumber++;
-//ts->totalQueryNumber++;
-//printf("totalQueryNumber = %d\n", ts->totalQueryNumber);
+
+                    ts->totalQueryNumber++;
+                    printf("totalQueryNumber = %d\n", ts->totalQueryNumber);
 //printf("activate = %d, q.size() = %d\n", ts->activateQueryNumber, (int) ts->q.size());
-                    new std::thread([](WorkQueue *ts, WorkNode *now) {
+
+                    std::thread *t = new std::thread([](WorkQueue *ts, WorkNode *now) {
                         ts->Deal(now);
                         printf("Response client %d finish\n", now->client);
                         ts->locker.lock();
@@ -310,11 +341,13 @@ void Usage() {
     std::cout << "<-w|--web> <args>:            网页文件的路径" << std::endl;
     std::cout << "<-t|--threads> <args>:        使用的线程数量" << std::endl;
     std::cout << "<-l|--low>:                   使用低内存模式" << std::endl;
+    std::cout << "<--batch>:                    最大batch数" << std::endl;
+    std::cout << "<--tokens>:                   最大tokens容量" << std::endl;
     std::cout << "<--port> <args>:              网页端口号" << std::endl;
 }
 
 void ParseArgs(int argc, char **argv, APIConfig &config) {
-    std::vector <std::string> sargv;
+    std::vector<std::string> sargv;
     for (int i = 0; i < argc; i++) {
         sargv.push_back(std::string(argv[i]));
     }
@@ -332,6 +365,10 @@ void ParseArgs(int argc, char **argv, APIConfig &config) {
             config.webPath = sargv[++i];
         } else if (sargv[i] == "--port") {
             config.port = atoi(sargv[++i].c_str());
+        } else if (sargv[i] == "--tokens") {
+            config.tokens = atoi(sargv[++i].c_str());
+        } else if (sargv[i] == "--batch") {
+            config.batch = atoi(sargv[++i].c_str());
         } else {
             Usage();
             exit(-1);
@@ -350,6 +387,8 @@ int main(int argc, char** argv) {
     fastllm::SetThreads(config.threads);
     fastllm::SetLowMemMode(config.lowMemMode);
     workQueue.model = fastllm::CreateLLMModelFromFile(config.path);
+    workQueue.model->tokensLimit = config.tokens;
+    workQueue.maxActivateQueryNumber = std::max(1, std::min(256, config.batch));
     workQueue.Start();
 
     int local_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -375,7 +414,6 @@ int main(int argc, char** argv) {
     listen(local_fd, 2000);
     printf("start...\n");
     int queuePos = 0;
-
     while (true) { //循环接收客户端的请求
         //5.创建一个sockaddr_in结构体，用来存储客户机的地址
         struct sockaddr_in client_addr;
@@ -386,8 +424,19 @@ int main(int argc, char** argv) {
             exit(-1);
         }
 
-        int size = read(client, buff, sizeof(buff));
+        int size = 0;
+        while (true) {
+            int cur = read(client, buff + size, sizeof(buff) - size);
+            size += cur;
+            if (httpChecker.IsValid(buff, size)) {
+                break;
+            }
+        }
         buff[size] = 0;
+
+        while (workQueue.q.size() > workQueue.maxActivateQueryNumber) {
+            sleep(0);
+        }
         workQueue.Push(buff, client);
     }
 

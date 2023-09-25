@@ -24,6 +24,7 @@ namespace fastllm {
         this->ops["ToFloat16"] = (BaseOperator*)(new CpuToFloat16());
         this->ops["ToFloat32"] = (BaseOperator*)(new CpuToFloat32());
         this->ops["Attention"] = (BaseOperator*)(new CpuAttention());
+        this->ops["CopyKVCache"] = (BaseOperator*)(new CpuCopyKVCacheOp());
         this->ops["Embedding"] = (BaseOperator*)(new CpuEmbedding());
         this->ops["LayerNorm"] = (BaseOperator*)(new CpuLayerNormOp());
         this->ops["GroupNorm"] = (BaseOperator*)(new CpuGroupNormOp());
@@ -68,6 +69,7 @@ namespace fastllm {
         this->ops["MatMulTransBBatch"] = (BaseOperator*)(new CpuMatMulTransBBatchOp());
         this->ops["SoftMaxBatch"] = (BaseOperator*)(new CpuSoftmaxBatchOp());
         this->ops["CatDirectBatch"] = (BaseOperator*)(new CpuCatDirectBatchOp());
+        this->ops["AttentionBatch"] = (BaseOperator*)(new CpuAttentionBatchOp());
     }
 
     bool CpuDevice::Malloc(void **ret, size_t size) {
@@ -293,7 +295,7 @@ namespace fastllm {
         float *qd = (float*)q.cpuData;
         float *kd = (float*)k.cpuData;
         float *vd = (float*)v.cpuData;
-        float *maskd = mask.dims.size() > 0 ? (float*)mask.cpuData : nullptr;
+        float *maskd = (datas.find("mask")->second && mask.dims.size() > 0) ? (float*)mask.cpuData : nullptr;
         float *od = (float*)output.cpuData;
         std::fill(od, od + output.Count(0), 0.0f);
         auto pool = GetPool();
@@ -306,6 +308,30 @@ namespace fastllm {
         }
         for (int o = 0; o < futures.size(); o++) {
             futures[o].get();
+        }
+    }
+
+    void CpuCopyKVCacheOp::Reshape(const std::string &opType, const fastllm::DataDict &datas,
+                                   const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
+        return;
+    }
+
+    void CpuCopyKVCacheOp::Run(const std::string &opType, const fastllm::DataDict &datas,
+                               const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
+        Data &oldCache = *(datas.find("oldCache")->second);
+        Data &newCache = *(datas.find("newCache")->second);
+
+        int oldBsStart = intParams.find("oldBsStart") != intParams.end() ? intParams.find("oldBsStart")->second : -1;
+        int newBsStart = intParams.find("newBsStart") != intParams.end() ? intParams.find("newBsStart")->second : -1;
+        int bs = intParams.find("bs") != intParams.end() ? intParams.find("bs")->second : -1;
+        int offset = intParams.find("offset") != intParams.end() ? intParams.find("offset")->second : -1;
+
+        int unitSize = oldCache.unitSize;
+        for (int o = 0; o < bs; o++) {
+            uint8_t *cur = newCache.cpuData + (newBsStart + o) * newCache.strides[0] * unitSize;
+            cur += offset * newCache.strides[1] * unitSize;
+            uint8_t *old = oldCache.cpuData + (oldBsStart + o) * oldCache.strides[0] * unitSize;
+            memcpy(cur, old, oldCache.dims[1] * oldCache.dims[2] * unitSize);
         }
     }
 

@@ -254,6 +254,8 @@ namespace fastllm {
         long long filePos;
         std::shared_ptr<FileMmap> m_file;
 
+        bool directMemory = false; // 直接分配/释放Memory，不经过缓存
+
         Data () {};
 
         Data (DataType type);
@@ -431,8 +433,14 @@ namespace fastllm {
 
     void ToDataType(const Data &input, DataType dataType);
 
+    void CopyKVCache(Data &oldCache, Data &newCache, int oldBsStart, int newBsStart, int bs, int offset);
+
     void Attention(const Data &q, const Data &k, const Data &v, const Data &mask, Data &output,
                    int group, float scale, int attentionType);
+
+    void AttentionBatch(std::vector <Data*> &q, std::vector <Data*> &k, std::vector <Data*> &v,
+                        std::vector <Data*> &mask, std::vector <Data*> &output,
+                        int group, float scale, int attentionType);
 
     void Embedding(const Data &input, Data &weight, Data &output);
 
