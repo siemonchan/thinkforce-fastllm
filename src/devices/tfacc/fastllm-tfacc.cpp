@@ -62,13 +62,13 @@ inline void ConfigureKMRound(int k, int m, int cores, int *_per_k, int *_per_m, 
     int k_round = (k - 1) / per_k + 1;
     int per_m_lower_limit = 1024;
     int per_k_lower_limit = 1024;
-    if (m <= per_m_lower_limit && k <= per_k_lower_limit) {
-        *_per_m = m;
-        *_per_k = k;
-        *_m_round = 1;
-        *_k_round = 1;
-        return;
-    }
+    // if (m <= per_m_lower_limit && k <= per_k_lower_limit) {
+    //     *_per_m = m;
+    //     *_per_k = k;
+    //     *_m_round = 1;
+    //     *_k_round = 1;
+    //     return;
+    // }
 
     // 粗略缩放，按照2倍递减
     while (m_round * k_round <= cores && per_m / 2 >= per_m_lower_limit && per_k / 2 >= per_k_lower_limit) {
@@ -183,15 +183,15 @@ void FastllmTfaccCopyStride(pointerType *dst, pointerType *src, int len, int rou
     }
 }
 
-void FastllmTfaccQuantization(uint8_t *dst, float *src, int len, int round, int dst_stride, int src_stride, 
-                              tfdl::PerChannelConfig config) {
+void FastllmTfaccQuantizationFloat32(uint8_t *dst, float *src, int len, int round, int dst_stride, int src_stride, 
+                                     tfdl::PerChannelConfig config) {
     for (int i = 0; i < round; i++) {
         config.configs[i].quantall(len, src + i * src_stride, dst + i * dst_stride);
     }
 }
 
-void FastllmTfaccQuantization(uint8_t *dst, uint16_t *src, int len, int round, int dst_stride, int src_stride,
-                              tfdl::PerChannelConfig config) {
+void FastllmTfaccQuantizationFloat16(uint8_t *dst, uint16_t *src, int len, int round, int dst_stride, int src_stride,
+                                     tfdl::PerChannelConfig config) {
     for (int i = 0; i < round; i++) {
         uint8_t *dst_walk = dst + i * dst_stride;
         uint16_t *src_walk = src + i * src_stride;
@@ -281,7 +281,7 @@ std::vector<tfdl::TFDataInt8 *> FastllmLinearPrepareInputData(pointerType *input
             for (int i = 0; i < m_round; i++) {
                 int cur_m = min(per_m, m - (i * per_m));
                 futures.push_back(pool->Submit([](uint8_t *dst, float *src, int len, int round, int dst_stride, int src_stride, tfdl::PerChannelConfig config){          
-                    FastllmTfaccQuantization(dst, src, len, round, dst_stride, src_stride, config);
+                    FastllmTfaccQuantizationFloat32(dst, src, len, round, dst_stride, src_stride, config);
                 }, temp_input[i]->GetInt8RawData(), (float *) input + i * per_m, cur_m, n, cur_m, m, perChannelConfig));
             }
             for (auto &one_future : futures) {
@@ -315,13 +315,56 @@ std::vector<tfdl::TFDataInt8 *> FastllmLinearPrepareInputData(pointerType *input
             for (int i = 0; i < m_round; i++) {
                 int cur_m = min(per_m, m - (i * per_m));
                 futures.push_back(pool->Submit([](uint8_t *dst, uint16_t *src, int len, int round, int dst_stride, int src_stride, tfdl::PerChannelConfig config){          
-                    FastllmTfaccQuantization(dst, src, len, round, dst_stride, src_stride, config);
+                    FastllmTfaccQuantizationFloat16(dst, src, len, round, dst_stride, src_stride, config);
                 }, temp_input[i]->GetInt8RawData(), (uint16_t *) input + i * per_m, cur_m, n, cur_m, m, perChannelConfig));
             }
             for (auto &one_future : futures) {
                 one_future.get();
             }
         }
+    } else {
+        ErrorInFastLLM("wrong input data type.\n");
+    }
+
+    return temp_input;
+}
+
+template <typename pointerType>
+std::vector<tfdl::TFDataInt8 *> FastllmConv2dPrepareInputData(pointerType *input, int batch, int channel, int height, int width, fastllm::ThreadPool *pool) {
+    int threadNum = fastllm::GetThreads();
+    vector<tfdl::TFDataInt8 *> temp_input;
+
+    if (typeid(pointerType) == typeid(float)) {
+        auto input_tf = tfdl::TFDataFloat({batch, channel, height, width}, input);
+        for (int i = 0; i < batch; i++) {
+            tfdl::PerChannelConfig perChannelConfig;
+            int st = i * channel * height * width;
+            int end = st + channel * height * width;
+            float minValue = input_tf.GetMinValue(st, end), maxValue = input_tf.GetMaxValue(st, end);
+            perChannelConfig.configs.push_back(tfdl::QuantizationConfig(minValue, maxValue));
+
+            temp_input.push_back(new tfdl::TFDataInt8(minValue, maxValue, {1, channel, height, width}));
+            temp_input.back()->SetPerChannelConfig(perChannelConfig);
+
+            // quantize input
+            vector<future<void>> futures;
+            int per = temp_input.back()->Count(0) / threadNum;
+            int last = temp_input.back()->Count(0) - (threadNum - 1) * per;
+            for (int j = 0; j < threadNum - 1; j++) {
+                float *src = input + i * channel * height * width + j * per;
+                uint8_t *dst = temp_input.back()->GetInt8RawData() + j * per;
+                futures.push_back(pool->Submit(FastllmTfaccQuantizationFloat32, dst, src, per, 1, 0, 0, perChannelConfig));
+            }
+            float *last_src = input + i * channel * height * width + (threadNum - 1) * per;
+            uint8_t *last_dst = temp_input.back()->GetInt8RawData() + (threadNum - 1) * per;
+            FastllmTfaccQuantizationFloat32(last_dst, last_src, last, 1, 0, 0, perChannelConfig);
+
+            for (auto &one_future : futures) {
+                one_future.get();
+            }
+        }
+    } else if (typeid(pointerType) == typeid(uint16_t)) {
+        // todo
     } else {
         ErrorInFastLLM("wrong input data type.\n");
     }
@@ -1302,12 +1345,7 @@ void FastllmTfaccConv2DUint8WFloat32D(float *input, float *output, uint8_t *weig
     }
 
     // prepare input
-    std::vector<tfdl::TFDataInt8 *> temp_input;
-    for (int i = 0; i < batch; i++) {
-        tfdl::TFDataFloat origin = tfdl::TFDataFloat({1, inputChannel, inputHeight, inputWidth}, 
-                                                     input + i * inputChannel * inputHeight * inputWidth);
-        temp_input.push_back(new tfdl::TFDataInt8(&origin));
-    }
+    std::vector<tfdl::TFDataInt8 *> temp_input = FastllmConv2dPrepareInputData(input, batch, inputChannel, inputHeight, inputWidth, pool);
     
     // prepare output
     std::vector<tfdl::TFDataFloat *> temp_output;

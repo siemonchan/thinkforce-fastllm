@@ -18,11 +18,11 @@ inline void FastllmTfaccAccumulateFloat16(uint16_t *x1, uint16_t *x2, uint16_t *
 template<typename pointerType>
 void FastllmTfaccCopyStride(pointerType *dst, pointerType *src, int len, int round, int dst_stride, int src_stride);
 
-void FastllmTfaccQuantization(uint8_t *dst, float *src, int len, int round, int dst_stride, int src_stride, 
-                              tfdl::PerChannelConfig config);
+void FastllmTfaccQuantizationFloat32(uint8_t *dst, float *src, int len, int round, int dst_stride, int src_stride, 
+                                     tfdl::PerChannelConfig config);
 
-void FastllmTfaccQuantization(uint8_t *dst, uint16_t *src, int len, int round, int dst_stride, int src_stride,
-                              tfdl::PerChannelConfig config);
+void FastllmTfaccQuantizationFloat16(uint8_t *dst, uint16_t *src, int len, int round, int dst_stride, int src_stride,
+                                     tfdl::PerChannelConfig config);
 
 void FastllmTfaccInitBlasop();
 

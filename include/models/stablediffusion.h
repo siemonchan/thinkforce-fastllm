@@ -72,12 +72,6 @@ namespace fastllm {
             Data &emb,
             Data &result,
             std::string pre);
-        
-        void ResBlockInt8(
-            Data &hiddenStates,
-            Data &emb,
-            Data &result,
-            std::string pre);
 
         void Transformer(
             Data &hiddenStates,

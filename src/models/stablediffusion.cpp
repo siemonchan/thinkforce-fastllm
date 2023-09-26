@@ -438,55 +438,6 @@ namespace fastllm {
         // ClearProfiler();
     }
 
-    void StableDiffusionModel::ResBlockInt8(Data &hiddenStates,
-                                            Data &emb,
-                                            Data &result,
-                                            std::string pre) {
-        /// 用于以全量化的方式处理整个ResBlock
-
-        // copy hidden states
-        result.Resize(hiddenStates.dims);
-        result.Allocate();
-
-        Data norm1, conv1, norm2, conv2, temb, tproj;
-        std::string norm1_gamma_weight_name = pre + "norm1.weight";
-        std::string norm1_beta_weight_name = pre + "norm1.bias";
-        std::string norm2_gamma_weight_name = pre + "norm2.weight";
-        std::string norm2_beta_weight_name = pre + "norm2.bias";
-        std::string down_conv1_weight_name = pre + "conv1.weight";
-        std::string down_conv1_bias_name = pre + "conv1.bias";
-        std::string time_emb_proj_weight_name = pre + "time_emb_proj.weight";
-        std::string time_emb_proj_bias_name = pre + "time_emb_proj.bias";
-        std::string down_conv2_weight_name = pre + "conv2.weight";
-        std::string down_conv2_bias_name = pre + "conv2.bias";
-        std::string conv_short_cut_weight_name = pre + "conv_shortcut.weight";
-        std::string conv_short_cut_bias_name = pre + "conv_shortcut.bias";
-
-        if (weight.weight.find(conv_short_cut_weight_name) != weight.weight.end()) {
-            Conv2d(hiddenStates, weight[conv_short_cut_weight_name], weight[conv_short_cut_bias_name], result);
-        } else {
-            memcpy(result.cpuData, hiddenStates.cpuData, hiddenStates.Count(0) * hiddenStates.unitSize);
-        }
-
-        // quantize input
-        Data norm1Q, tprojQ, resultF;
-        GroupNorm(hiddenStates, weight[norm1_gamma_weight_name], weight[norm1_beta_weight_name], 32, norm1);
-        Silu(norm1, norm1);
-        QuantizeInt8(norm1, norm1Q);
-        Conv2d(norm1, weight[down_conv1_weight_name], weight[down_conv1_bias_name], conv1, 1, 1);
-        if (!emb.dims.empty()) {
-            Silu(emb, temb);
-            Linear(temb, weight[time_emb_proj_weight_name], weight[time_emb_proj_bias_name], tproj);
-            QuantizeInt8(tproj, tprojQ);
-            AddTo(conv1, tprojQ);
-        }
-        GroupNorm(conv1, weight[norm2_gamma_weight_name], weight[norm2_beta_weight_name], 32, norm2);
-        Silu(norm2, norm2);
-        Conv2d(norm2, weight[down_conv2_weight_name], weight[down_conv2_bias_name], conv2, 1, 1);
-        DequantizeInt8(conv2, resultF);
-        AddTo(result, resultF);
-    }
-
     void StableDiffusionModel::Transformer(Data &hiddenStates,
                                            Data &encoderHiddenStates,
                                            Data &result,
