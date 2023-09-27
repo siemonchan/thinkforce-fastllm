@@ -249,10 +249,13 @@ std::vector<tfdl::TFDataInt8 *> FastllmLinearPrepareInputData(pointerType *input
     vector<tfdl::TFDataInt8 *> temp_input;
     if (typeid(pointerType) == typeid(float)) {
         if (n == 1) {
+            auto input_tf = tfdl::TFDataFloat({n, m}, (float *) input);
+            float minValue = input_tf.GetMinValue();
+            float maxValue = input_tf.GetMaxValue();
             for (int i = 0; i < m_round; i++) {
                 int cur_m = min(per_m, m - (i * per_m));
-                tfdl::TFDataFloat origin = tfdl::TFDataFloat({n, cur_m}, (float *) input + i * per_m);
-                temp_input.push_back(new tfdl::TFDataInt8(&origin));
+                temp_input.push_back(new tfdl::TFDataInt8(minValue, maxValue, {n, cur_m}, 
+                                     vector<float>((float *) input + i * per_m, (float *) input + i * per_m + cur_m)));
             }
         } else {
             auto input_tf = tfdl::TFDataFloat({n, m}, (float *) input);
