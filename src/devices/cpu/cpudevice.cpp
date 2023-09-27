@@ -549,6 +549,28 @@ namespace fastllm {
         }
     }
 
+    void CpuGroupNormSingleGroup(float *dst, float *src, int channel, int spatial, float *gamma, float *beta) {
+        float mean = 0, var = 0;
+        for (int j = 0; j < channel * spatial; j++) {
+            mean += src[j];
+        }
+        mean /= (float) (channel * spatial);
+
+        for (int j = 0; j < channel * spatial; j++) {
+            float x = src[j] - mean;
+            var += x * x;
+        }
+        var = sqrtf(var / (channel * spatial) + 1e-5);
+
+        for (int c = 0; c < channel; c++) {
+            float g = gamma[c];
+            float b = beta[c];
+            for (int s = 0; s < spatial; s++) {
+                (*dst++) = (((*src++) - mean) / var) * g + b;
+            }
+        }
+    }
+
     void CpuGroupNormOp::Run(const std::string &opType, const DataDict &datas, 
                              const FloatDict &floatParams, const IntDict &intParams) {
         Data &input = *(datas.find("input")->second);
@@ -567,47 +589,23 @@ namespace fastllm {
         float *outputData = (float *) output.cpuData;
         float *gammaData = (float *) gamma.cpuData;
         float *betaData = (float *) beta.cpuData;
-        float *mean = new float[group], *var = new float[group];
 
+        auto pool = GetPool();
+        int threadNum = GetThreads();
+
+        std::vector<std::future<void>> futures;
         for (int b = 0; b < batch; b++) {
-            std::fill(mean, mean + group, 0.f);
-            std::fill(var, var + group, 0.f);
-
-            float *inputWalk = inputData;
             for (int g = 0; g < group; g++) {
-                for (int j = 0; j < perChannel * spatial; j++) {
-                    mean[g] += *inputWalk++;
-                }
-                mean[g] /= (float) (perChannel * spatial);
+                float *src = inputData + (b * channel + g * perChannel) * spatial;
+                float *dst = outputData + (b * channel + g * perChannel) * spatial;
+                float *gamma = gammaData + g * perChannel;
+                float *beta = betaData + g * perChannel;
+                futures.push_back(pool->Submit(CpuGroupNormSingleGroup, dst, src, perChannel, spatial, gamma, beta));
             }
-            inputWalk = inputData;
-            for (int g = 0; g < group; g++) {
-                for (int j = 0; j < perChannel * spatial; j++) {
-                    float x = (*inputWalk++) - mean[g];
-                    var[g] += x * x;
-                }
-                var[g] = sqrtf(var[g] / (perChannel * spatial) + 1e-5);
-            }
-
-            inputWalk = inputData;
-            float *outputWalk = outputData;
-
-            for (int g = 0; g < group; g++) {
-                for (int c = 0; c < perChannel; c++) {
-                    int curChannel = g * perChannel + c;
-                    float gamma = gammaData[curChannel];
-                    float beta = betaData[curChannel];
-                    for (int s = 0; s < spatial; s++) {
-                        (*outputWalk++) = (((*inputWalk++) - mean[g]) / var[g]) * gamma + beta;
-                    }
-                }
-            }
-
-            inputData += channel * spatial;
-            outputData += channel * spatial;
         }
-        delete[] mean;
-        delete[] var;
+        for (int i = 0; i < futures.size(); i++) {
+            futures[i].get();
+        }
     }
 
     void CpuRMSNormOp::Run(const std::string &opType, const fastllm::DataDict &datas,
@@ -3761,7 +3759,7 @@ namespace fastllm {
         auto pool = GetPool();
         int per = len / threadNum;
 
-        std::vector<future<void>> futures;
+        std::vector<std::future<void>> futures;
         for (int id = 0; id < threadNum - 1; id++) {
             int st = id * per;
             int end = st + per;
@@ -3800,7 +3798,7 @@ namespace fastllm {
         auto pool = GetPool();
         int per = len / threadNum;
 
-        std::vector<future<void>> futures;
+        std::vector<std::future<void>> futures;
         for (int id = 0; id < threadNum - 1; id++) {
             int st = id * per;
             int end = st + per;
