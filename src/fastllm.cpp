@@ -251,6 +251,7 @@ namespace fastllm {
     }
 
     Data::Data(fastllm::DataType type, const std::vector<int> &dims, const std::vector<float> &data) : Data::Data(type, dims) {
+        // std::cout<<"调用数值构造"<<std::endl;
         this->Allocate();
         if (type == DataType::FLOAT32) {
             std::memcpy(this->cpuData, data.data(), this->GetBytes());
@@ -262,6 +263,7 @@ namespace fastllm {
     }
 
     void Data::CopyFrom(const Data &ori) {
+        // std::cout<<"调用拷贝构造"<<std::endl;
         if (ori.dims != this->dims || this->cpuData == nullptr) {
             if (ori.dims.size() == 0) {
                 delete[] this->cpuData;
@@ -627,6 +629,10 @@ namespace fastllm {
         return shape;
     }
 
+    std::vector<int> Data::Shape() const{
+        return this->dims;
+    }
+
     void Data::Print() const {
         printf("shape: ");
         for (int i : this->dims) {
@@ -683,7 +689,7 @@ namespace fastllm {
             weightSum.resize(n);
             for (int i = 0; i < n; i++) {
                 int j = 0;
-#ifdef __AVX__
+#ifdef __AVX2__
                 __m256i acc = _mm256_setzero_si256();
                 const __m256i ones = _mm256_set1_epi16(1);
                 for (; j + 31 < m; j += 32) {
@@ -729,7 +735,7 @@ namespace fastllm {
                 }
                 weightSum[i] += sum0[0] + sum0[1] + sum0[2] + sum0[3];
 #endif
-#ifdef __AVX__
+#ifdef __AVX2__
 	            __m256i acc = _mm256_setzero_si256();
 	            const __m256i lowMask = _mm256_set1_epi8(0xf);
 	            const __m256i ones = _mm256_set1_epi16(1);
@@ -1050,6 +1056,132 @@ namespace fastllm {
                             v.push_back(stringToTokenDict[now]);
                         }
                     }
+                }
+            }
+            return Data (DataType::FLOAT32, {1, (int)v.size()}, v);
+        } else if (this->type == TokenizerType::GLM) {
+            const std::map<std::string, int> specialTokens = {{"[MASK]", 50003}, {"[sMASK]", 50008}, {"[gMASK]", 50009}};
+            std::string blank = "";
+            blank += 226, blank += 150, blank += 129;
+            std::string s = blank;
+            for (int i = 0; i < ori.size(); i++) {
+                if (ori[i] == ' ') {
+                    if (i != 0 && ori[i - 1] != ' ') {
+                        s += blank;
+                    }
+                } else {
+                    s += ori[i];
+                }
+            }
+            std::vector<float> v;
+            int findPos=0;
+            while(findPos<s.length()){
+                int nextSpecialToken=-1;
+                int nextSpecialTokenPos=-1;
+                int nextSpecialTokenLen=-1;
+                for(auto p:specialTokens){
+                    int ind=s.find(p.first,findPos);
+                    if(ind>=0&&(nextSpecialTokenPos<0||ind<nextSpecialTokenPos)){
+                        nextSpecialTokenPos=ind;
+                        nextSpecialToken=p.second;
+                        nextSpecialTokenLen=p.first.length();
+                    }
+                }
+                std::string subStr;
+                if(nextSpecialTokenPos<0){
+                    subStr=s.substr(findPos);
+                    findPos=s.length();
+                }else{
+                    subStr=s.substr(findPos,nextSpecialTokenPos-findPos);
+                    findPos=nextSpecialTokenPos+nextSpecialTokenLen;
+                }
+                if(subStr.length()>0){
+#ifdef USE_SENTENCEPIECE
+                    if(spProcessor!=nullptr){
+                        std::vector<int> ids;
+                        spProcessor->Encode(subStr,&ids);
+                        for(int id:ids){
+                            v.push_back(id);
+                        }
+                    }else{
+#endif
+                    std::vector<Symbol> symbols;
+                    for (int i = 0; i < subStr.size(); i++) {
+                        int tokenId = -999999, pos = i - 1;
+                        TrieNode *now = this->root;
+                        for (int j = i; j < subStr.size(); j++) {
+                            if (now->next.find(subStr[j]) != now->next.end()) {
+                                now = now->next[subStr[j]];
+                                if (now->tokenId != -999999) {
+                                    tokenId = now->tokenId;
+                                    pos = j;
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                        if (pos >= i) {
+                            symbols.push_back(Symbol(now, (char *) subStr.data(), i, pos - i + 1, (int) symbols.size() - 1,
+                                                     (int) symbols.size() + 1, -999999));
+                            i = pos;
+                        } else {
+                            symbols.push_back(Symbol(nullptr, (char *) subStr.data(), i, 0, (int) symbols.size() - 1,
+                                                     (int) symbols.size() + 1, -999999));
+                        }
+                    }
+                    symbols.back().next = -1;
+
+                    std::priority_queue<SymbolPairs> workQueue;
+                    for (int i = 1; i < symbols.size(); i++) {
+                        TryMergePairs(symbols, i - 1, i, workQueue);
+                    }
+
+                    while (!workQueue.empty()) {
+                        auto top = workQueue.top();
+                        workQueue.pop();
+                        if (symbols[top.l].len == 0 || symbols[top.r].len == 0 ||
+                                symbols[top.l].len + symbols[top.r].len != top.size) {
+                            continue;
+                        }
+
+                        for (int i = symbols[top.r].pos; i < symbols[top.r].pos + symbols[top.r].len; i++) {
+                            symbols[top.l].node = symbols[top.l].node->next[symbols[top.r].s[i]];
+                        }
+                        symbols[top.l].len += symbols[top.r].len;
+                        symbols[top.r].len = 0;
+                        symbols[top.l].next = symbols[top.r].next;
+                        if (symbols[top.r].next >= 0) {
+                            symbols[symbols[top.r].next].prev = top.l;
+                        }
+
+                        TryMergePairs(symbols, symbols[top.l].prev, top.l, workQueue);
+                        TryMergePairs(symbols, top.l, symbols[top.l].next, workQueue);
+                    }
+                    for (int i = 0; i < symbols.size(); i++) {
+                        if (symbols[i].len > 0) {
+                            v.push_back(symbols[i].node->tokenId);
+                        } else if (symbols[i].node == nullptr) {
+                            if (symbols[i].fixId != -999999) {
+                                v.push_back(symbols[i].fixId);
+                            } else {
+                                // 未识别的字符
+                                uint8_t c = (uint8_t) (symbols[i].s[symbols[i].pos]);
+                                std::string now = "<0x00>";
+                                now[3] = (c / 16 > 9 ? ('A' + c / 16 - 10) : ('0' + c / 16));
+                                now[4] = (c % 16 > 9 ? ('A' + c % 16 - 10) : ('0' + c % 16));
+                                if (stringToTokenDict.find(now) != stringToTokenDict.end()) {
+                                    v.push_back(stringToTokenDict[now]);
+                                }
+                            }
+                        }
+                    }
+#ifdef USE_SENTENCEPIECE
+                    }
+#endif
+                }
+                if(nextSpecialTokenPos>=0){
+                    v.push_back(nextSpecialToken);
                 }
             }
             return Data (DataType::FLOAT32, {1, (int)v.size()}, v);

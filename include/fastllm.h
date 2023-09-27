@@ -23,6 +23,10 @@
 #include "Data.h"  
 #endif
 
+#ifdef USE_SENTENCEPIECE
+#include <sentencepiece_processor.h>
+#endif
+
 namespace fastllm {
     void SetDeviceMap(const std::map <std::string, int> &deviceMap);
     std::map <std::string, int> GetDeviceMap();
@@ -296,7 +300,11 @@ namespace fastllm {
 
         void PrintShape() const; // 输出形状
 
+<<<<<<< HEAD
         std::string ShapeString() const; // 返回形状string
+=======
+        std::vector<int> Shape() const; 
+>>>>>>> upstream/master
 
         void Print() const; // 输出
 
@@ -318,8 +326,12 @@ namespace fastllm {
             BPE = 0,
             NORMAL = 1,
             QWEN = 2,
+<<<<<<< HEAD
             GPT2 = 3,
             CLIP = 4,
+=======
+            GLM = 3
+>>>>>>> upstream/master
         };
 
         struct TrieNode {
@@ -370,6 +382,9 @@ namespace fastllm {
         std::unordered_map <int, std::string> tokenToStringDict;
         std::unordered_map <int, float> tokenToScoreDict;
         std::unordered_map <std::string, int> stringToTokenDict;
+#ifdef USE_SENTENCEPIECE
+        std::unique_ptr<sentencepiece::SentencePieceProcessor> spProcessor;
+#endif
 
         Tokenizer ();
 
