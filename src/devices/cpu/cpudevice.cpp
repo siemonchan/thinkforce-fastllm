@@ -23,6 +23,7 @@ namespace fastllm {
         this->ops["ToFloat16"] = (BaseOperator*)(new CpuToFloat16());
         this->ops["ToFloat32"] = (BaseOperator*)(new CpuToFloat32());
         this->ops["Attention"] = (BaseOperator*)(new CpuAttention());
+        this->ops["CopyKVCache"] = (BaseOperator*)(new CpuCopyKVCacheOp());
         this->ops["Embedding"] = (BaseOperator*)(new CpuEmbedding());
         this->ops["LayerNorm"] = (BaseOperator*)(new CpuLayerNormOp());
         this->ops["RMSNorm"] = (BaseOperator*)(new CpuRMSNormOp());
@@ -58,6 +59,7 @@ namespace fastllm {
         this->ops["MatMulTransBBatch"] = (BaseOperator*)(new CpuMatMulTransBBatchOp());
         this->ops["SoftMaxBatch"] = (BaseOperator*)(new CpuSoftmaxBatchOp());
         this->ops["CatDirectBatch"] = (BaseOperator*)(new CpuCatDirectBatchOp());
+        this->ops["AttentionBatch"] = (BaseOperator*)(new CpuAttentionBatchOp());
     }
 
     bool CpuDevice::Malloc(void **ret, size_t size) {
@@ -78,7 +80,7 @@ namespace fastllm {
         return true;
     }
 
-#ifdef __AVX__
+
 #ifdef __AVX2__
     int DotU8U8(uint8_t *a, uint8_t *b, int n) {
         __m256i acc = _mm256_setzero_si256();
@@ -106,32 +108,31 @@ namespace fastllm {
 
         return ans + I32sum(acc);
     };
-#else
-    int DotU8U8(uint8_t *a, uint8_t *b, int n) {
-        __m256i acc = _mm256_setzero_si256();
+//#else
+//    int DotU8U8(uint8_t *a, uint8_t *b, int n) {
+//        __m256i acc = _mm256_setzero_si256();
 
-        int i = 0;
-        int ans = 0;
-        for (; i + 31 < n; i += 32) {
-            __m256i bx = _mm256_loadu_si256((const __m256i *) (a + i));
-            __m256i by = _mm256_loadu_si256((const __m256i *) (b + i));
+//        int i = 0;
+//        int ans = 0;
+//        for (; i + 31 < n; i += 32) {
+//            __m256i bx = _mm256_loadu_si256((const __m256i *) (a + i));
+//            __m256i by = _mm256_loadu_si256((const __m256i *) (b + i));
 
-            __m256i mx0 = _mm256_cvtepu8_epi16(_mm256_extractf128_si256(bx, 0));
-            __m256i mx1 = _mm256_cvtepu8_epi16(_mm256_extractf128_si256(bx, 1));
+//            __m256i mx0 = _mm256_cvtepu8_epi16(_mm256_extractf128_si256(bx, 0));
+//            __m256i mx1 = _mm256_cvtepu8_epi16(_mm256_extractf128_si256(bx, 1));
 
-            __m256i my0 = _mm256_cvtepu8_epi16(_mm256_extractf128_si256(by, 0));
-            __m256i my1 = _mm256_cvtepu8_epi16(_mm256_extractf128_si256(by, 1));
+//            __m256i my0 = _mm256_cvtepu8_epi16(_mm256_extractf128_si256(by, 0));
+//            __m256i my1 = _mm256_cvtepu8_epi16(_mm256_extractf128_si256(by, 1));
 
-            acc = _mm256_add_epi32(acc, _mm256_madd_epi16(mx0, my0));
-            acc = _mm256_add_epi32(acc, _mm256_madd_epi16(mx1, my1));
-        }
-        for (; i < n; i++) {
-            ans += a[i] * b[i];
-        }
+//            acc = _mm256_add_epi32(acc, _mm256_madd_epi16(mx0, my0));
+//            //acc = _mm256_add_epi32(acc, _mm256_madd_epi16(mx1, my1));
+//        }
+//        for (; i < n; i++) {
+//            ans += a[i] * b[i];
+//        }
 
-        return ans + I32sum(acc);
-    };
-#endif
+//        return ans + I32sum(acc);
+//    };
     int DotU4U8(uint8_t *a, uint8_t *b, int n) {
         __m256i acc = _mm256_setzero_si256();
 
@@ -281,7 +282,7 @@ namespace fastllm {
         float *qd = (float*)q.cpuData;
         float *kd = (float*)k.cpuData;
         float *vd = (float*)v.cpuData;
-        float *maskd = mask.dims.size() > 0 ? (float*)mask.cpuData : nullptr;
+        float *maskd = (datas.find("mask")->second && mask.dims.size() > 0) ? (float*)mask.cpuData : nullptr;
         float *od = (float*)output.cpuData;
         std::fill(od, od + output.Count(0), 0.0f);
         auto pool = GetPool();
@@ -294,6 +295,30 @@ namespace fastllm {
         }
         for (int o = 0; o < futures.size(); o++) {
             futures[o].get();
+        }
+    }
+
+    void CpuCopyKVCacheOp::Reshape(const std::string &opType, const fastllm::DataDict &datas,
+                                   const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
+        return;
+    }
+
+    void CpuCopyKVCacheOp::Run(const std::string &opType, const fastllm::DataDict &datas,
+                               const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
+        Data &oldCache = *(datas.find("oldCache")->second);
+        Data &newCache = *(datas.find("newCache")->second);
+
+        int oldBsStart = intParams.find("oldBsStart") != intParams.end() ? intParams.find("oldBsStart")->second : -1;
+        int newBsStart = intParams.find("newBsStart") != intParams.end() ? intParams.find("newBsStart")->second : -1;
+        int bs = intParams.find("bs") != intParams.end() ? intParams.find("bs")->second : -1;
+        int offset = intParams.find("offset") != intParams.end() ? intParams.find("offset")->second : -1;
+
+        int unitSize = oldCache.unitSize;
+        for (int o = 0; o < bs; o++) {
+            uint8_t *cur = newCache.cpuData + (newBsStart + o) * newCache.strides[0] * unitSize;
+            cur += offset * newCache.strides[1] * unitSize;
+            uint8_t *old = oldCache.cpuData + (oldBsStart + o) * oldCache.strides[0] * unitSize;
+            memcpy(cur, old, oldCache.dims[1] * oldCache.dims[2] * unitSize);
         }
     }
 
@@ -895,7 +920,7 @@ namespace fastllm {
                 c[block * kstride + i] = value;
             }
         }
-#elif defined(__AVX__)
+#elif defined(__AVX2__)
         int block = 0;
         for (; block < n; block++) {
             uint8_t *weightWalk = b;
@@ -969,7 +994,7 @@ namespace fastllm {
                     sum0 = vpadalq_u16(sum0, vmull_u8(vb, in.val[0]));
                 }
                 value += sum0[0] + sum0[1] + sum0[2] + sum0[3];
-#elif defined(__AVX__)
+#elif defined(__AVX2__)
                 value += DotU4U8(weightWalk + i * m / 2, inputWalk, m);
                 j += m;
 #endif
@@ -1040,7 +1065,7 @@ namespace fastllm {
                     sum0 = vpadalq_u16(sum0, vmull_u8(vb, in.val[0]));
                 }
                 value += sum0[0] + sum0[1] + sum0[2] + sum0[3];
-#elif defined(__AVX__)
+#elif defined(__AVX2__)
                 value += DotU4U8(weightWalk + i * m / 2, inputWalk, m);
                 j += m;
 #endif
