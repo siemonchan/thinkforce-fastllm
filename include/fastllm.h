@@ -325,8 +325,8 @@ namespace fastllm {
             NORMAL = 1,
             QWEN = 2,
             GPT2 = 3,
-            CLIP = 4,
-            GLM = 5
+            GLM = 4,
+            CLIP = 5
         };
 
         struct TrieNode {
