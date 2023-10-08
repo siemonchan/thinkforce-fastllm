@@ -91,7 +91,7 @@ namespace fastllm {
         Data &weight = *(datas.find("weight")->second);
         int m = weight.dims[1];
         int k = weight.dims[0];
-        return /*m >= 1024 && k >= 1024 &&*/ (
+        return m >= 1024 && k >= 1024 && (
                (input.dataType == DataType::FLOAT32 && (weight.dataType == DataType::FLOAT32 || 
                                                         weight.dataType == DataType::FLOAT16 || 
                                                         weight.dataType == DataType::INT8)) ||

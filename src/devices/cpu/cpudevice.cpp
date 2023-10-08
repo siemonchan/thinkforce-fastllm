@@ -551,12 +551,30 @@ namespace fastllm {
 
     void CpuGroupNormSingleGroup(float *dst, float *src, int channel, int spatial, float *gamma, float *beta) {
         float mean = 0, var = 0;
-        for (int j = 0; j < channel * spatial; j++) {
+        int j = 0;
+#ifdef __aarch64__
+        float32x4_t sum = vdupq_n_f32(0);
+        for (; j + 3 < channel * spatial; j += 4) {
+            sum = vaddq_f32(sum, vld1q_f32(src + j));
+        }
+        mean = sum[0] + sum[1] + sum[2] + sum[3];
+#endif
+        for (; j < channel * spatial; j++) {
             mean += src[j];
         }
         mean /= (float) (channel * spatial);
 
-        for (int j = 0; j < channel * spatial; j++) {
+        j = 0;
+#ifdef __aarch64__
+        float32x4_t meanx4 = vdupq_n_f32(mean);
+        float32x4_t varx4 = vdupq_n_f32(0);
+        for (; j + 3 < channel * spatial; j += 4) {
+            float32x4_t xx4 = vsubq_f32(vld1q_f32(src + j), meanx4);
+            varx4 = vaddq_f32(varx4, vmulq_f32(xx4, xx4));
+        }
+        var = varx4[0] + varx4[1] + varx4[2] + varx4[3];
+#endif
+        for (; j < channel * spatial; j++) {
             float x = src[j] - mean;
             var += x * x;
         }
@@ -565,9 +583,23 @@ namespace fastllm {
         for (int c = 0; c < channel; c++) {
             float g = gamma[c];
             float b = beta[c];
-            for (int s = 0; s < spatial; s++) {
-                (*dst++) = (((*src++) - mean) / var) * g + b;
+            int s = 0;
+#ifdef __aarch64__
+            float32x4_t gx4 = vdupq_n_f32(g);
+            float32x4_t bx4 = vdupq_n_f32(b);
+            float32x4_t meanx4 = vdupq_n_f32(mean);
+            float32x4_t varx4 = vdupq_n_f32(var);
+            for (; s + 3 < spatial; s += 4) {
+                float32x4_t tmp = vdivq_f32(vsubq_f32(vld1q_f32(src + s), meanx4), varx4);
+                vst1q_f32(dst + s, vaddq_f32(vmulq_f32(tmp, gx4), bx4));
             }
+#endif
+            for (; s < spatial; s++) {
+                dst[s] = ((src[s] - mean) / var) * g + b;
+            }
+
+            src += spatial;
+            dst += spatial;
         }
     }
 
