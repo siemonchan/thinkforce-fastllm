@@ -213,12 +213,19 @@ void FastllmTfaccQuantizationFloat16(uint8_t *dst, uint16_t *src, int len, int r
     }
 }
 
-void FastllmTfaccInitBlasop() {
+void FastllmTfaccInitBlasop(int maxCmdNum) {
+    int total_cores = 8 * TF_TFNN_GetChipNum();
     if (FastllmTfaccBlasopCache.empty()) {
-        int maxCmdNum = 512 * 1024;
-        int total_cores = 8 * TF_TFNN_GetChipNum();
         for (int i = 0; i < total_cores; i++) {
             FastllmTfaccBlasopCache.push_back(new tfacc40t::BlasopList(TF_TFNN_GetChipId(i), maxCmdNum));
+        }
+    } else {
+        for (int i = 0; i < total_cores; i++) {
+            if (FastllmTfaccBlasopCache[i]->cap < maxCmdNum) {
+                auto del = FastllmTfaccBlasopCache[i];
+                FastllmTfaccBlasopCache[i] = new tfacc40t::BlasopList(TF_TFNN_GetChipId(i), maxCmdNum);
+                delete del;
+            }
         }
     }
 }
@@ -1317,7 +1324,7 @@ void FastllmTfaccConv2DUint8WFloat32D(float *input, float *output, uint8_t *weig
     }
     
     // create space for blasop
-    FastllmTfaccInitBlasop();
+    FastllmTfaccInitBlasop(1024 * 1024);
 
     // prepare weight
     long long int weight_key = (long long int) weight;

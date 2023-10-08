@@ -24,7 +24,7 @@ void FastllmTfaccQuantizationFloat32(uint8_t *dst, float *src, int len, int roun
 void FastllmTfaccQuantizationFloat16(uint8_t *dst, uint16_t *src, int len, int round, int dst_stride, int src_stride,
                                      tfdl::PerChannelConfig config);
 
-void FastllmTfaccInitBlasop();
+void FastllmTfaccInitBlasop(int maxCmdNum = 60000);
 
 void FastllmTfaccClearBlasop();
 
