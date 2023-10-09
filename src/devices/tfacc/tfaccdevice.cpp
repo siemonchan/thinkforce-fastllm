@@ -511,9 +511,6 @@ namespace fastllm {
         int outputWidth = output.dims[3];
 
         output.Allocate();
-        auto pool = GetPool();
-        std::vector<std::future<void> > futures;
-        int threadNum = GetThreads();
 
         if (input.dataType == DataType::FLOAT32 && output.dataType == DataType::FLOAT32) {
             float *inputData = (float *) input.cpuData;
@@ -521,6 +518,12 @@ namespace fastllm {
             float *biasData = bias.dims.size() == 0 ? nullptr : (float *) bias.cpuData;
             if (weight.dataType == DataType::FLOAT32) {
                 // todo
+                float *weightData = (float *) weight.cpuData;
+                auto pool = GetPool();
+                FastllmTfaccConv2DFloat32WFloat32D(inputData, outputData, weightData, biasData, batch, 
+                    inputChannel, inputHeight, inputWidth, outputChannel, outputHeight, outputWidth,
+                    kernel, stride, padding, dilation, group, pool);
+
             } else if (weight.dataType == DataType::INT8) {
                 uint8_t *weightData = (uint8_t *) weight.cpuData;
                 AssertInFastLLM(weight.tfWeightConfig.axis == 0, 
@@ -532,19 +535,8 @@ namespace fastllm {
                     inputChannel, inputHeight, inputWidth, outputChannel, outputHeight, outputWidth,
                     kernel, stride, padding, dilation, group, weight.tfWeightConfig, pool);
             }
-        } else if (input.dataType == DataType::INT8 && output.dataType == DataType::INT8) {
-            uint8_t *inputData = (uint8_t *) input.cpuData;
-            uint8_t *outputData = (uint8_t *) output.cpuData;
-            float *biasData = bias.dims.size() == 0 ? nullptr : (float *) bias.cpuData;
-            if (weight.dataType == DataType::INT8) {
-                uint8_t *weightData = (uint8_t *) weight.cpuData;
-                AssertInFastLLM(weight.tfWeightConfig.axis == 0, 
-                                "Think Force`s TFACC only support per channel config on axis 0.");
-                AssertInFastLLM(weight.tfWeightConfig.configs.size() == outputChannel, 
-                                "Conv2d`s weight config size doesn`t match the requirement of Think Force`s TFACC");
-            } else {
-                ErrorInFastLLM("Conv2d uint8 data only support uint8 weight\n");
-            }
+        } else {
+            ErrorInFastLLM("Conv2d`s input and output must be Float32.\n");
         }
     }
 

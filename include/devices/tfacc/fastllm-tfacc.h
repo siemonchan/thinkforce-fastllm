@@ -52,3 +52,9 @@ void FastllmTfaccConv2DUint8WFloat32D(float *input, float *output, uint8_t *weig
                                       int outputChannel, int outputHeight, int outputWidth, 
                                       int kernel, int stride, int padding, int dilation, int group,
                                       tfdl::PerChannelConfig tfWeightConfig, fastllm::ThreadPool *pool);
+
+void FastllmTfaccConv2DFloat32WFloat32D(float *input, float *output, float *weight, float *bias, int batch,
+                                        int inputChannel, int inputHeight, int inputWidth, 
+                                        int outputChannel, int outputHeight, int outputWidth, 
+                                        int kernel, int stride, int padding, int dilation, int group,
+                                        fastllm::ThreadPool *pool);
