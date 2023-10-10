@@ -237,15 +237,14 @@ namespace fastllm {
             std::vector<int> outputSize = {q.dims[1], q.dims[2], q.dims[0], pastKey.dims[1]};
             q.Reshape({q.dims[0], q.dims[1] * q.dims[2], q.dims[3]});
             PermuteSelf(q, {1, 0, 2});
-            //Attention(q, pastKey, pastValue, attentionMask, contextLayer, q.dims[0] / pastKey.dims[0], 1.0 / scale_attn, 1);
+            Attention(q, pastKey, pastValue, attentionMask, contextLayer, q.dims[0] / pastKey.dims[0], 1.0 / scale_attn, 1);
 
-
+/*
             // 1.2 Attention
             // 1.2.0 q * k^T
             q.Reshape({pastKey.dims[0], -1, q.dims[2]});
             MatMulTransB(q, pastKey, attnProbs, 1.0 / (scale_attn * (i + 1)));
             attnProbs.Reshape(outputSize);
-
             // 1.2.1 Mask
             if (attentionMask.dims.size() != 0) {
                 AttentionMask(attnProbs, attentionMask, -10000);
@@ -259,6 +258,8 @@ namespace fastllm {
 
             attnProbs.Reshape({pastValue.dims[0], -1, attnProbs.dims[2]});
             MatMul(attnProbs, pastValue, contextLayer);
+*/
+
             contextLayer.Reshape({batch, num_attention_heads, maxLen, -1});
             PermuteSelf(contextLayer, {2, 0, 1, 3});
             contextLayer.Reshape({contextLayer.dims[0], contextLayer.dims[1], embed_dim});
@@ -302,34 +303,47 @@ namespace fastllm {
         }
 
         Data logits, topk;
-        if (version == 1) {
-            LayerNorm(hiddenStates, weight["transformer.final_layernorm.weight"],
-                      weight["transformer.final_layernorm.bias"], -1, hiddenStates);
-            Linear(hiddenStates, weight["lm_head.weight"], Data(), logits);
+        Data tempHiddenStates;
+        Data *lastHiddenStates;
+        if (maxLen > 1) {
+            Split(hiddenStates, 0, maxLen - 1, maxLen, tempHiddenStates);
+            lastHiddenStates = &tempHiddenStates;
         } else {
-            RMSNorm(hiddenStates, weight["transformer.encoder.final_layernorm.weight"], 1e-5, hiddenStates);
-            Linear(hiddenStates, weight["transformer.output_layer.weight"], Data(), logits);
+            lastHiddenStates = &hiddenStates;
         }
-        if (generationConfig.output_logits && retLogits != nullptr) {
-            int size = logits.dims.back();
-            logits.ToDevice(DataDevice::CPU);
-            for (int b = 0; b < batch; b++) {
-                int base = (maxLen - 1) * batch + b;
-                (*retLogits)[b]->resize(size);
-                memcpy((float*)(*retLogits)[b]->data(), ((float*)logits.cpuData) + base * size, size * logits.unitSize);
+
+        {
+            auto &hiddenStates = *lastHiddenStates;
+            if (version == 1) {
+                LayerNorm(hiddenStates, weight["transformer.final_layernorm.weight"],
+                          weight["transformer.final_layernorm.bias"], -1, hiddenStates);
+                Linear(hiddenStates, weight["lm_head.weight"], Data(), logits);
+            } else {
+                RMSNorm(hiddenStates, weight["transformer.encoder.final_layernorm.weight"], 1e-5, hiddenStates);
+                Linear(hiddenStates, weight["transformer.output_layer.weight"], Data(), logits);
             }
-        }
-        if (generationConfig.IsSimpleGreedy()) {
-            TopK(logits, topk, 1);
-            topk.ToDevice(DataDevice::CPU);
-            for (int b = 0; b < batch; b++) {
-                int base = (maxLen - 1) * batch + b;
-                lastRet.push_back((int) (((float *) topk.cpuData)[base * 2] + 1e-3));
+            if (generationConfig.output_logits && retLogits != nullptr) {
+                int size = logits.dims.back();
+                logits.ToDevice(DataDevice::CPU);
+                for (int b = 0; b < batch; b++) {
+                    int base = b;
+                    (*retLogits)[b]->resize(size);
+                    memcpy((float *) (*retLogits)[b]->data(), ((float *) logits.cpuData) + base * size,
+                           size * logits.unitSize);
+                }
             }
-        } else if (!lastTokens.units.empty()) {
-            for (int b = 0; b < batch; b++) {
-                int base = (maxLen - 1) * batch + b;
-                lastRet.push_back(LLMSampling(logits, base, generationConfig, lastTokens.units[b]));
+            if (generationConfig.IsSimpleGreedy()) {
+                TopK(logits, topk, 1);
+                topk.ToDevice(DataDevice::CPU);
+                for (int b = 0; b < batch; b++) {
+                    int base = b;
+                    lastRet.push_back((int) (((float *) topk.cpuData)[base * 2] + 1e-3));
+                }
+            } else if (!lastTokens.units.empty()) {
+                for (int b = 0; b < batch; b++) {
+                    int base = b;
+                    lastRet.push_back(LLMSampling(logits, base, generationConfig, lastTokens.units[b]));
+                }
             }
         }
         return lastRet;
