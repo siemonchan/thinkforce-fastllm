@@ -8,6 +8,37 @@
 #include "basellm.h"
 
 namespace fastllm {
+    class VisualModel {
+    public:
+        VisualModel();
+
+        void Decode(
+                const std::vector<std::string> &imagePaths, 
+                Data *images);
+        
+        int width;
+        int imageSize;
+        int nQueries;
+        int outputDim;
+        int patchSize;
+        int layers;
+
+        int heads;
+        int grid_size;
+
+        int samplerNumHead;
+        int samplerHeadDim;
+
+        Data mean, std;
+        Data positionalEmbedding;
+        Data samplerPosEmbed;
+
+        Data samplerWQ, samplerWK, samplerWV;
+        Data samplerBQ, samplerBK, samplerBV;
+
+        WeightMap *weight;
+    };
+
     class QWenModel : public basellm {
     public:
         QWenModel();

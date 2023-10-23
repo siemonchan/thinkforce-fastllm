@@ -34,6 +34,12 @@
 #include "armMath.h"
 #endif
 
+#ifdef USE_OPENCV
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+#endif
+
 namespace fastllm {
     static void MySleep(int t) {
 #if defined(_WIN32) or defined(_WIN64)
@@ -261,6 +267,42 @@ namespace fastllm {
             pin1 += 8;
 
         }
+    }
+#endif
+
+#ifdef USE_OPENCV
+    static void opencvLoadImage(std::string path, std::string mode, int size, float *dst) {
+        auto image = cv::imread(path, -1);
+        if (mode == "RGB") {
+            if (image.channels() == 1) {
+                cv::cvtColor(image, image, cv::COLOR_GRAY2RGB);
+            } else if (image.channels() == 4) {
+                cv::cvtColor(image, image, cv::COLOR_BGRA2RGB);
+            } else {
+                cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
+            }
+        } else if (mode == "BGR") {
+            if (image.channels() == 1) {
+                cv::cvtColor(image, image, cv::COLOR_GRAY2BGR);
+            } else if (image.channels() == 4) {
+                cv::cvtColor(image, image, cv::COLOR_BGRA2BGR);
+            }
+        }/*  else if (mode == "GRAY") {
+            if (image.channels() == 4) {
+                cv::cvtColor(image, image, cv::COLOR_BGRA2GRAY);
+            } else {
+                cv::cvtColor(image, image, cv::COLOR_BGR2GRAY);
+            }
+        } */
+
+        cv::resize(image, image, cv::Size(size, size), 0, 0, cv::INTER_CUBIC);
+        image.convertTo(image, CV_32FC3);
+
+        std::vector<cv::Mat> channels;
+        for (int i = 0; i < 3; i++) {
+            channels.push_back(cv::Mat(size, size, CV_32FC1, dst + i * size * size));
+        }
+        cv::split(image, channels);
     }
 #endif
 }

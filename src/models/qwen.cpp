@@ -29,6 +29,210 @@
 namespace fastllm {
     extern double GetSpan(std::chrono::system_clock::time_point time1, std::chrono::system_clock::time_point time2);
 
+    VisualModel::VisualModel() {
+        width = 1664;
+        imageSize = 448;
+        nQueries = 256;
+        outputDim = 4096;
+        patchSize = 14;
+        layers = 48;
+
+        heads = 16;
+        grid_size = 16;
+
+        samplerNumHead = 32;
+        samplerHeadDim = 128;
+        
+        // initialize mean and std
+        std::vector<float> meanData = {0.48145466, 0.4578275, 0.40821073};
+        std::vector<float> stdData = {0.26862954, 0.26130258, 0.27577711};
+        mean.CopyFrom(Data(DataType::FLOAT32, {1, 3}, meanData));
+        std.CopyFrom(Data(DataType::FLOAT32, {1, 3}, stdData));
+
+        Data temp = Data(DataType::FLOAT32);
+        int src_size = (int) sqrt(nQueries);
+        int tgt_size = (int) (imageSize / patchSize);
+
+        // initialize positionalEmbedding
+        temp.Resize({nQueries, width});
+        temp.Allocate();
+        Randn(temp);
+        Scaling(temp, sqrtf(width));
+        if (src_size != tgt_size) {
+            temp.Reshape({1, src_size, src_size, -1});
+            PermuteSelf(temp, {0, 3, 1, 2});
+            Interpolate(temp, positionalEmbedding, tgt_size / src_size, 2, false);
+            PermuteSelf(positionalEmbedding, {0, 2, 3, 1});
+            positionalEmbedding.Reshape({tgt_size * tgt_size, -1});
+        } else {
+            positionalEmbedding.CopyFrom(temp);
+        }
+
+        // initialize samplerPosEmbed
+        std::vector<float> gridData(2 * grid_size * grid_size);
+        float *grid_h = gridData.data();
+        float *grid_w = gridData.data() + grid_size * grid_size;
+        for (int i = 0; i < grid_size; i++) {
+            for (int j = 0; j < grid_size; j++) {
+                grid_h[i * grid_size + j] = j;
+                grid_w[i * grid_size + j] = i;
+            }
+        }
+
+        std::vector<float> omega;
+        for (int i = 0; i < outputDim / 4; i++) {
+            omega.push_back(1.0 / pow(10000.f, (float) i / (outputDim / 2)));
+        }
+
+        std::vector<float> samplerPosEmbedData(grid_size * grid_size * outputDim);
+        for (int i = 0; i < grid_size * grid_size; i++) {
+            for (int j = 0; j < outputDim / 4; j++) {
+                samplerPosEmbedData[i * outputDim + 4 * j + 0] = ::sin(grid_h[i] * omega[j]);
+                samplerPosEmbedData[i * outputDim + 4 * j + 1] = ::cos(grid_h[i] * omega[j]);
+                samplerPosEmbedData[i * outputDim + 4 * j + 0] = ::sin(grid_w[i] * omega[j]);
+                samplerPosEmbedData[i * outputDim + 4 * j + 1] = ::cos(grid_w[i] * omega[j]);
+            }
+        }
+        temp = Data(DataType::FLOAT32, {grid_size * grid_size, outputDim}, samplerPosEmbedData);
+        if (src_size != tgt_size) {
+            temp.Resize({1, src_size, src_size, -1});
+            PermuteSelf(temp, {0, 3, 1, 2});
+            Interpolate(temp, samplerPosEmbed, tgt_size / src_size, 2, false);
+            PermuteSelf(samplerPosEmbed, {0, 2, 3, 1});
+            samplerPosEmbed.Reshape({tgt_size * tgt_size, -1});
+        } else {
+            samplerPosEmbed.CopyFrom(temp);
+        }
+        samplerPosEmbed.Unsqueeze(1);
+    }
+
+    void VisualModel::Decode(const std::vector<std::string> &imagePaths, Data *images) {
+        Data allImage = Data(DataType::FLOAT32);
+        int n = (int) imagePaths.size();
+        allImage.Expansion({n, 3, imageSize, imageSize});
+
+        for (auto path : imagePaths) {
+            Data image;
+            LoadImageData(path, "RGB", imageSize, image);
+            ImageNormalize(image, mean, std, true);
+            CatDirect(allImage, image, 0);
+        }
+
+        Data hiddenStates;
+        Data q, k, v;
+        Data attnInput, attnOutput, attnWeights, attnFinalOutput;
+
+        Conv2d(allImage, (*weight)["transformer.visual.conv1.weight"], Data(), hiddenStates, patchSize);
+        hiddenStates.Reshape({hiddenStates.dims[0], hiddenStates.dims[1], -1});
+        PermuteSelf(hiddenStates, {0, 2, 1});
+        
+        AddTo(hiddenStates, positionalEmbedding);
+        LayerNorm(hiddenStates, (*weight)["transformer.visual.ln_pre.weight"], 
+                                (*weight)["transformer.visual.ln_pre.bias"], -1, hiddenStates);
+        PermuteSelf(hiddenStates, {1, 0, 2});
+
+        int emb_dim = width / heads;
+        for (int i = 0; i < layers; i++) {
+            std::string pre = "transformer.visual.transformer.resblocks." + std::to_string(i) + ".";
+            LayerNorm(hiddenStates, (*weight)[pre + "ln_1.weight"], (*weight)[pre + "ln_1.bias"], -1, attnInput);
+
+            // attention
+            int sq = attnInput.dims[0], b = attnInput.dims[1];
+            Linear(attnInput, (*weight)[pre + "attn.in_proj.weight"], (*weight)[pre + "attn.in_proj.bias"], attnOutput);
+            attnOutput.Reshape({sq, b, heads, 3 * emb_dim});
+            Split(attnOutput, 3, 0, emb_dim, q);
+            Split(attnOutput, 3, emb_dim, 2 * emb_dim, k);
+            Split(attnOutput, 3, 2 * emb_dim, 3 * emb_dim, v);
+
+            q.Reshape({sq, b * heads, emb_dim});
+            k.Reshape({sq, b * heads, emb_dim});
+            v.Reshape({sq, b * heads, emb_dim});
+            PermuteSelf(q, {1, 0, 2});
+            PermuteSelf(k, {1, 0, 2});
+            PermuteSelf(v, {1, 0, 2});
+
+            MatMulTransB(q, k, attnWeights, 1.0 / sqrt(emb_dim));
+            Softmax(attnWeights, attnWeights, -1);
+            MatMul(attnWeights, v, attnOutput);
+
+            attnOutput.Reshape({b, heads, sq, emb_dim});
+            PermuteSelf(attnOutput, {2, 0, 1, 3});
+            attnOutput.Reshape({sq, b, width});
+
+            Linear(attnOutput, (*weight)[pre + "attn.out_proj.weight"], (*weight)[pre + "attn.out_proj.bias"], attnFinalOutput);
+            AddTo(hiddenStates, attnFinalOutput);
+
+            // mlp
+            LayerNorm(hiddenStates, (*weight)[pre + "ln_2.weight"], (*weight)[pre + "ln_2.bias"], -1, attnInput);
+            Linear(attnInput, (*weight)[pre + "mlp.c_fc.weight"], (*weight)[pre + "mlp.c_fc.bias"], attnOutput);
+            GeluNew(attnOutput, attnOutput);
+            Linear(attnOutput, (*weight)[pre + "mlp.c_proj.weight"], (*weight)[pre + "mlp.c_proj.bias"], attnFinalOutput);
+            AddTo(hiddenStates, attnFinalOutput);
+        }
+        PermuteSelf(hiddenStates, {1, 0, 2});
+
+        // attn pool
+        Data sampInput;
+        Linear(hiddenStates, (*weight)["transformer.visual.attn_pool.kv_proj.weight"], Data(), sampInput);
+        LayerNorm(sampInput, (*weight)["transformer.visual.attn_pool.ln_kv.weight"], 
+                             (*weight)["transformer.visual.attn_pool.ln_kv.bias"], -1, sampInput);
+        PermuteSelf(sampInput, {1, 0, 2});
+
+        Data query, key, value;
+        LayerNorm((*weight)["transformer.visual.attn_pool.query"], 
+                  (*weight)["transformer.visual.attn_pool.ln_q.weight"], 
+                  (*weight)["transformer.visual.attn_pool.ln_q.bias"], -1, query);
+        query.Unsqueeze(1);
+        Repeat(query, 1, sampInput.dims[1], q);
+        AddTo(q, samplerPosEmbed);
+        
+        k.CopyFrom(sampInput);
+        AddTo(k, samplerPosEmbed);
+
+        v.CopyFrom(sampInput);
+
+        // multihead attention
+        int tgt_len = q.dims[0];
+        int src_len = k.dims[0];
+        int bsz = q.dims[1];
+
+        if (samplerWQ.dims.empty()) {
+            std::string w_str = "transformer.visual.attn_pool.attn.in_proj_weight";
+            std::string b_str = "transformer.visual.attn_pool.attn.in_proj_bias";
+            Split((*weight)[w_str], 0, 0 * outputDim, 1 * outputDim, samplerWQ);
+            Split((*weight)[w_str], 0, 1 * outputDim, 2 * outputDim, samplerWK);
+            Split((*weight)[w_str], 0, 2 * outputDim, 3 * outputDim, samplerWV);
+            Split((*weight)[b_str], 0, 0 * outputDim, 1 * outputDim, samplerWQ);
+            Split((*weight)[b_str], 0, 1 * outputDim, 2 * outputDim, samplerWK);
+            Split((*weight)[b_str], 0, 2 * outputDim, 3 * outputDim, samplerWV);
+        }
+        Linear(q, samplerWQ, samplerBQ, query);
+        Linear(k, samplerWK, samplerBK, key);
+        Linear(v, samplerWV, samplerBV, value);
+
+        query.Reshape({tgt_len, bsz * samplerNumHead, samplerHeadDim});
+        key.Reshape({src_len, bsz * samplerNumHead, samplerHeadDim});
+        value.Reshape({src_len, bsz * samplerNumHead, samplerHeadDim});
+        PermuteSelf(query, {1, 0, 2});
+        PermuteSelf(key, {1, 0, 2});
+        PermuteSelf(value, {1, 0, 2});
+
+        MatMulTransB(query, key, attnWeights, 1.f / sqrtf(query.dims.back()));
+        Softmax(attnWeights, attnWeights, -1);
+        MatMul(attnWeights, value, attnOutput);
+        PermuteSelf(attnOutput, {1, 0, 2});
+        attnOutput.Reshape({tgt_len * bsz, outputDim});
+        Linear(attnOutput, (*weight)["transformer.visual.attn_pool.attn.out_proj.weight"], 
+                           (*weight)["transformer.visual.attn_pool.attn.out_proj.bias"], attnFinalOutput);
+        attnFinalOutput.Reshape({tgt_len, bsz, attnFinalOutput.dims[1]});
+        PermuteSelf(attnFinalOutput, {1, 0, 2});
+
+        // ln_post & proj
+        LayerNorm(attnFinalOutput, (*weight)["transformer.visual.ln_post.weight"], 
+                                   (*weight)["transformer.visual.ln_post.bias"], -1, hiddenStates);
+        Linear(hiddenStates, (*weight)["transformer.visual.proj"], Data(), *images);
+    } 
+
     QWenModel::QWenModel() {
         this->model_type = "qwen";
         this->pre_prompt = "You are a helpful assistant.";

@@ -296,6 +296,8 @@ namespace fastllm {
 
         void Reshape(const std::vector <int> &dims); // 更改尺寸,但不修改数据
 
+        void Unsqueeze(int aixs);
+
         uint64_t Count(int i) const; // dims[i] * strides[i]
 
         void PrintShape() const; // 输出形状
@@ -464,7 +466,7 @@ namespace fastllm {
 
     void Linear(Data &input, Data &weight, const Data &bias, Data &output);
 
-    void Conv2d(Data &input, Data &weight, Data &bias, Data &output, int stride = 1, int padding = 0, int dilation = 1, int group = 1);
+    void Conv2d(Data &input, Data &weight, const Data &bias, Data &output, int stride = 1, int padding = 0, int dilation = 1, int group = 1);
 
     void Interpolate(Data &input, Data &output, float scale, int mode, int alignCorner); // mode: 0: bilinear, 1: nearest
 
@@ -514,6 +516,8 @@ namespace fastllm {
 
     void RepeatKV(Data &input, int num_key_value_groups);
 
+    void Repeat(Data &input, int axis, int repeats, Data &output);
+
     void ApplyLognAttn(Data &input, const Data &lognAttn, const Data &positionIds);
 
     void Linspace(Data &data, float start, float end, int steps);
@@ -549,6 +553,10 @@ namespace fastllm {
 
     void IA3Layer(Data &input, Data &weight, Data &ia3_l, Data &bias, Data &output,
                   std::map <std::string, std::string> ia3Config);
+
+    void LoadImageData(const std::string &path, const std::string &mode, int size, Data &output);
+
+    void ImageNormalize(Data &image, Data &mean, Data &std, bool toTensor);
 }
 
 #endif //TEST_FASTLLM_H

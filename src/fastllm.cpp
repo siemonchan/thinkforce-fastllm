@@ -363,6 +363,18 @@ namespace fastllm {
         Resize(outputDims);
     }
 
+    void Data::Unsqueeze(int axis) {
+        std::vector<int> new_dims;
+        for (int i = 0; i < dims.size(); i++) {
+            if (i == axis) {
+                new_dims.push_back(1);
+            }
+            new_dims.push_back(dims[i]);
+        }
+
+        Reshape(new_dims);
+    }
+
     uint64_t Data::GetBytes() const {
         return (this->strides[0] * this->dims[0] * this->unitSize - 1) / this->unitSizeDiv + 1;
     }
@@ -2037,9 +2049,9 @@ namespace fastllm {
         }, {}, {});
     }
 
-    void Conv2d(Data &input, Data &weight, Data &bias, Data &output, int stride, int padding, int dilation, int group) {
+    void Conv2d(Data &input, Data &weight, const Data &bias, Data &output, int stride, int padding, int dilation, int group) {
         curExecutor->Run("Conv2d", {
-            {"input", &input}, {"weight", &weight}, {"bias", &bias}, {"output", &output}
+            {"input", &input}, {"weight", &weight}, {"bias", (Data*) &bias}, {"output", &output}
         }, {}, {{"stride", stride}, {"padding", padding}, {"dilation", dilation}, {"group", group}});
     }
 
@@ -2193,6 +2205,10 @@ namespace fastllm {
 
     void RepeatKV(Data &input, int num_key_value_groups) {
         curExecutor->Run("RepeatKV", {{"input", &input}}, {}, {{"num_key_value_groups", num_key_value_groups}});
+    }
+
+    void Repeat(Data &input, int axis, int repeats, Data &output) {
+
     }
 
     void ApplyLognAttn(Data &input, const Data &lognAttn, const Data &positionIds) {
@@ -2370,6 +2386,18 @@ namespace fastllm {
                 MulTo(output, ia3_l);
             }
         }
+    }
+
+    void LoadImageData(const std::string &path, const std::string &mode, int size, Data &output) {
+        std::vector<float> imageData(3 * size * size);
+        opencvLoadImage(path, mode, size, imageData.data());
+        output.CopyFrom(Data(DataType::FLOAT32, {1, 3, size, size}, imageData));
+    }
+
+    void ImageNormalize(Data &image, Data &mean, Data &std, bool toTensor) {
+        curExecutor->Run("ImageNormalize", {
+            {"image", &image}, {"mean", &mean}, {"std", &std}
+        }, {}, {{"toTensor", (int) toTensor}});
     }
 
     void ClearProfiler() {

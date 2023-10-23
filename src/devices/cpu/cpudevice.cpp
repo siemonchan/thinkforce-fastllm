@@ -61,6 +61,7 @@ namespace fastllm {
         this->ops["CumProd"] = (BaseOperator*)(new CpuCumProdOp());
         this->ops["Unique"] = (BaseOperator*)(new CpuUniqueOp());
         this->ops["Randn"] = (BaseOperator*)(new CpuRandnOp());
+        this->ops["ImageNormalize"] = (BaseOperator*)(new CpuImageNormalizeOp());
 
         this->ops["SplitBatch"] = (BaseOperator*)(new CpuSplitBatchOp());
         this->ops["CatBatch"] = (BaseOperator*)(new CpuCatBatchOp());
@@ -3000,7 +3001,14 @@ namespace fastllm {
         AssertInFastLLM(len % inner == 0, "MulTo error: Data`s shape can`t perform MulTo operation.\n");
         int round = (len / inner);
         for (int j = 0; j < round; j++) {
-            for (int i = 0; i < len; i++) {
+            int i = 0;
+#ifdef __aarch64__
+            for (; i + 3 < len; i += 4) {
+                float32x4_t res = vmulq_f32(vld1q_f32(input0Data + i), vld1q_f32(input1Data + i));
+                vst1q_f32(input0Data + i, res);
+            }
+#endif
+            for (; i < len; i++) {
                input0Data[i] *= input1Data[i];
             }
             input0Data += inner;
@@ -3044,7 +3052,15 @@ namespace fastllm {
             if (input0.dataType == DataType::FLOAT32) {
                 float *input0Data = (float *) input0.cpuData;
                 float *input1Data = (float *) input1.cpuData;
-                for (int i = 0; i < len; i++) {
+                int i = 0;
+#ifdef __aarch64__
+                float32x4_t alphax4 = vdupq_n_f32(alpha);
+                for (; i + 3 < len; i += 4) {
+                    float32x4_t res = vaddq_f32(vld1q_f32(input0Data + i), vmulq_f32(vld1q_f32(input1Data + i), alphax4));
+                    vst1q_f32(input0Data + i, res);
+                }
+#endif
+                for (; i < len; i++) {
                     input0Data[i] += input1Data[i] * alpha;
                 }
             } else if (input0.dataType == DataType::FLOAT16) {
@@ -3720,6 +3736,41 @@ namespace fastllm {
 
         for (int i = 0; i < len; i++) {
             ((float *) data.cpuData)[i] = dist(generator);
+        }
+    }
+
+    void CpuImageNormalizeOp::Run(const std::string &opType, const DataDict &datas, 
+                                  const FloatDict &floatParams, const IntDict &intParams) {
+        Data &image = *(datas.find("image")->second);
+        Data &mean = *(datas.find("mean")->second);
+        Data &std = *(datas.find("std")->second);
+        int toTensor = intParams.find("toTensor") != intParams.end() ? intParams.find("toTensor")->second : 0;
+
+        int batch = image.dims[0];
+        int channel = image.dims[1];
+        int spatial = image.dims[2];
+        AssertInFastLLM(channel == mean.Count(0), "Image channel and mean size are different.\n");
+        AssertInFastLLM(channel == std.Count(0), "Image channel and std size are different.\n");
+
+        float *imageData = (float *) image.cpuData;
+        float *meanData = (float *) mean.cpuData;
+        float *stdData = (float *) std.cpuData;
+        if (toTensor) {
+            for (int i = 0; i < image.Count(0); i++) {
+                imageData[i] /= 255;
+            }
+        }
+
+        for (int n = 0; n < batch; n++) {
+            for (int c = 0; c < channel; c++) {
+                float curMean = meanData[c];
+                float curStd = stdData[c];
+                float *curImage = imageData + (n * channel + c) * spatial;
+                for (int s = 0; s < spatial; s++) {
+                    curImage[s] -= curMean;
+                    curImage[s] /= curStd;
+                }
+            }
         }
     }
 
