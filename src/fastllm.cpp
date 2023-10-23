@@ -1198,7 +1198,8 @@ namespace fastllm {
             }
             return Data (DataType::FLOAT32, {1, (int)v.size()}, v);
         } else if (this->type == TokenizerType::QWEN) {
-            std::map<std::string, int> specialTokens = {{"<|im_start|>", 151644}, {"<|im_end|>", 151645}, {"<|endoftext|>", 151643}};
+            std::map<std::string, int> specialTokens = {{"<|im_start|>", 151644}, {"<|im_end|>", 151645}, {"<|endoftext|>", 151643},
+                                                        {"<img>", 151857}, {"</img>", 0}};
             
             // comment these special tokens for now
             // for (int i = 0; i < 205; i++) {
@@ -1258,13 +1259,34 @@ namespace fastllm {
 
                     std::string special = ori.substr(sep.back().first, sep.back().second);
                     if (specialTokens.find(special) != specialTokens.end()) {
-                        v.push_back(specialTokens[special]);
+                        v.push_back(specialTokens[special]);    
+                        i += sep.back().second - 1;
+                        sep.pop_back();
+                        if (special == "<img>") {
+                            int image_st = i + 1;
+
+                            i = sep.back().first;
+                            int image_end = i;
+
+                            i += sep.back().second - 1;
+                            sep.pop_back();
+
+                            // std::string image_str = ori.substr(image_st, image_end - image_st);
+                            // printf("image str: %s\n", image_str.c_str());
+
+                            // 处理image token
+                            for (int j = image_st; j < image_end; j++) {
+                                v.push_back((float) (int) ori[j]);
+                            }
+                            for (int j = image_end; j < image_st + 256; j++) {
+                                v.push_back(0);
+                            }
+                        }
+                        continue;
+                    } else if (!special.empty()) {
+                        printf("%s\n", special.c_str());
+                        ErrorInFastLLM("Can not find such special token in QWen`s tokenizer.\n");
                     }
-
-                    i += sep.back().second - 1;
-                    sep.pop_back();
-
-                    continue;
                 }
 
                 int tokenId = -999999, pos = i - 1;

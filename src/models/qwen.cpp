@@ -264,6 +264,11 @@ namespace fastllm {
         }
 
         weight.embeddingNames.insert("transformer.wte.weight");
+
+        if (weight.dicts.find("visual") != weight.dicts.end()) {
+            visual = new VisualModel();
+            visual->weight = &this->weight;
+        }
     }
 
     int QWenModel::Forward(const Data &inputIds,
@@ -299,6 +304,38 @@ namespace fastllm {
         // }
         // printf("\n");
         Embedding(inputIds, this->weight["transformer.wte.weight"], hiddenStates);
+        if (visual) {
+            int image_start_id = std::atoi(weight.dicts["image_start_id"].c_str());
+            float *inputIdsData = (float *) inputIds.cpuData;
+            float *hiddenStatesData = (float *) hiddenStates.cpuData;
+            for (int b = 0; b < batch; b++) {
+                std::vector<std::string> imagePath;
+                std::vector<int> imageLocs;
+                for (int i = 0; i < inputIds.Count(0) / batch; i++) {
+                    if ((int) inputIdsData[i] == image_start_id) {
+                        imagePath.push_back("");
+                        imageLocs.push_back(i);
+                        for (int j = i + 1; j <= i + 256; j++) {
+                            if (inputIdsData[j]) {
+                                imagePath.back() += (int) inputIdsData[j];
+                            }
+                        }
+                        i += 256;
+                    }    
+                }
+                inputIdsData += inputIds.Count(1);
+
+                Data images;
+                visual->Decode(imagePath, &images);
+
+                // 将image encoding嵌入到hidden states中
+                for (int i = 0; i < imageLocs.size(); i++) {
+                    int loc = imageLocs[i];
+                    memcpy(hiddenStatesData + b * hiddenStates.Count(1) + loc * embed_dim, 
+                           (float *) images.cpuData + b * images.Count(1), images.Count(1) * sizeof(float));
+                }
+            }
+        }
         for (int i = 0; i < this->block_cnt; i++) {
             ApplyDeviceMap(this->deviceMap, i + 1, block_cnt);
             int seqlen = hiddenStates.dims[1];
