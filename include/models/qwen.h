@@ -95,6 +95,8 @@ namespace fastllm {
 
         bool use_log_attn;
         Data logn_list;
+
+        VisualModel *visual = nullptr;
     
     private:
         std::string im_start = "<|im_start|>";
