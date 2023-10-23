@@ -2389,9 +2389,13 @@ namespace fastllm {
     }
 
     void LoadImageData(const std::string &path, const std::string &mode, int size, Data &output) {
+#ifdef USE_OPENCV
         std::vector<float> imageData(3 * size * size);
         opencvLoadImage(path, mode, size, imageData.data());
         output.CopyFrom(Data(DataType::FLOAT32, {1, 3, size, size}, imageData));
+#else
+        ErrorInFastLLM("LoadImageData requires OpenCV.\n");
+#endif
     }
 
     void ImageNormalize(Data &image, Data &mean, Data &std, bool toTensor) {
