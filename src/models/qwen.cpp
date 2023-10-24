@@ -29,7 +29,7 @@
 namespace fastllm {
     extern double GetSpan(std::chrono::system_clock::time_point time1, std::chrono::system_clock::time_point time2);
 
-    VisualModel::VisualModel() {
+    VisualModel::VisualModel(WeightMap *weight) {
         width = 1664;
         imageSize = 448;
         nQueries = 256;
@@ -42,6 +42,10 @@ namespace fastllm {
 
         samplerNumHead = 32;
         samplerHeadDim = 128;
+
+        this->weight = weight;
+        // parse weight dict
+        std::string visual_dict = weight->dicts["visual"];
         
         // initialize mean and std
         std::vector<float> meanData = {0.48145466, 0.4578275, 0.40821073};
@@ -61,12 +65,13 @@ namespace fastllm {
         if (src_size != tgt_size) {
             temp.Reshape({1, src_size, src_size, -1});
             PermuteSelf(temp, {0, 3, 1, 2});
-            Interpolate(temp, positionalEmbedding, tgt_size / src_size, 2, false);
+            Interpolate(temp, positionalEmbedding, tgt_size / src_size, 0, false);
             PermuteSelf(positionalEmbedding, {0, 2, 3, 1});
             positionalEmbedding.Reshape({tgt_size * tgt_size, -1});
         } else {
             positionalEmbedding.CopyFrom(temp);
         }
+        positionalEmbedding.Unsqueeze(0);
 
         // initialize samplerPosEmbed
         std::vector<float> gridData(2 * grid_size * grid_size);
@@ -81,29 +86,33 @@ namespace fastllm {
 
         std::vector<float> omega;
         for (int i = 0; i < outputDim / 4; i++) {
-            omega.push_back(1.0 / pow(10000.f, (float) i / (outputDim / 2)));
+            omega.push_back(1.0 / pow(10000.f, (float) i / (outputDim / 4)));
         }
 
         std::vector<float> samplerPosEmbedData(grid_size * grid_size * outputDim);
         for (int i = 0; i < grid_size * grid_size; i++) {
             for (int j = 0; j < outputDim / 4; j++) {
-                samplerPosEmbedData[i * outputDim + 4 * j + 0] = ::sin(grid_h[i] * omega[j]);
-                samplerPosEmbedData[i * outputDim + 4 * j + 1] = ::cos(grid_h[i] * omega[j]);
-                samplerPosEmbedData[i * outputDim + 4 * j + 0] = ::sin(grid_w[i] * omega[j]);
-                samplerPosEmbedData[i * outputDim + 4 * j + 1] = ::cos(grid_w[i] * omega[j]);
+                samplerPosEmbedData[i * outputDim + outputDim / 4 * 0 + j] = ::sin(grid_h[i] * omega[j]);
+                samplerPosEmbedData[i * outputDim + outputDim / 4 * 1 + j] = ::cos(grid_h[i] * omega[j]);
+                samplerPosEmbedData[i * outputDim + outputDim / 4 * 2 + j] = ::sin(grid_w[i] * omega[j]);
+                samplerPosEmbedData[i * outputDim + outputDim / 4 * 3 + j] = ::cos(grid_w[i] * omega[j]);
             }
         }
-        temp = Data(DataType::FLOAT32, {grid_size * grid_size, outputDim}, samplerPosEmbedData);
+        samplerPosEmbed = Data(DataType::FLOAT32, {grid_size * grid_size, outputDim}, samplerPosEmbedData);
         if (src_size != tgt_size) {
-            temp.Resize({1, src_size, src_size, -1});
+            temp.CopyFrom(samplerPosEmbed);
+            temp.Reshape({1, src_size, src_size, -1});
             PermuteSelf(temp, {0, 3, 1, 2});
-            Interpolate(temp, samplerPosEmbed, tgt_size / src_size, 2, false);
-            PermuteSelf(samplerPosEmbed, {0, 2, 3, 1});
-            samplerPosEmbed.Reshape({tgt_size * tgt_size, -1});
+            Interpolate(temp, samplerPosEmbedAbsPos, tgt_size / src_size, 0, false);
+            PermuteSelf(samplerPosEmbedAbsPos, {0, 2, 3, 1});
+            samplerPosEmbedAbsPos.Reshape({tgt_size * tgt_size, -1});
         } else {
-            samplerPosEmbed.CopyFrom(temp);
+            samplerPosEmbedAbsPos.CopyFrom(samplerPosEmbed);
         }
         samplerPosEmbed.Unsqueeze(1);
+        samplerPosEmbedAbsPos.Unsqueeze(1);
+
+        return;
     }
 
     void VisualModel::Decode(const std::vector<std::string> &imagePaths, Data *images) {
@@ -133,6 +142,9 @@ namespace fastllm {
 
         int emb_dim = width / heads;
         for (int i = 0; i < layers; i++) {
+            printf("[%d/%d]\r", i + 1, layers);
+            fflush(stdout);
+
             std::string pre = "transformer.visual.transformer.resblocks." + std::to_string(i) + ".";
             LayerNorm(hiddenStates, (*weight)[pre + "ln_1.weight"], (*weight)[pre + "ln_1.bias"], -1, attnInput);
 
@@ -187,7 +199,7 @@ namespace fastllm {
         AddTo(q, samplerPosEmbed);
         
         k.CopyFrom(sampInput);
-        AddTo(k, samplerPosEmbed);
+        AddTo(k, samplerPosEmbedAbsPos);
 
         v.CopyFrom(sampInput);
 
@@ -202,9 +214,9 @@ namespace fastllm {
             Split((*weight)[w_str], 0, 0 * outputDim, 1 * outputDim, samplerWQ);
             Split((*weight)[w_str], 0, 1 * outputDim, 2 * outputDim, samplerWK);
             Split((*weight)[w_str], 0, 2 * outputDim, 3 * outputDim, samplerWV);
-            Split((*weight)[b_str], 0, 0 * outputDim, 1 * outputDim, samplerWQ);
-            Split((*weight)[b_str], 0, 1 * outputDim, 2 * outputDim, samplerWK);
-            Split((*weight)[b_str], 0, 2 * outputDim, 3 * outputDim, samplerWV);
+            Split((*weight)[b_str], 0, 0 * outputDim, 1 * outputDim, samplerBQ);
+            Split((*weight)[b_str], 0, 1 * outputDim, 2 * outputDim, samplerBK);
+            Split((*weight)[b_str], 0, 2 * outputDim, 3 * outputDim, samplerBV);
         }
         Linear(q, samplerWQ, samplerBQ, query);
         Linear(k, samplerWK, samplerBK, key);
@@ -264,10 +276,13 @@ namespace fastllm {
         }
 
         weight.embeddingNames.insert("transformer.wte.weight");
+    }
 
+    void QWenModel::LoadFromFile(const std::string &fileName) {
+        this->weight.LoadFromFile(fileName);
+        this->InitParams();
         if (weight.dicts.find("visual") != weight.dicts.end()) {
-            visual = new VisualModel();
-            visual->weight = &this->weight;
+            this->visual = new VisualModel(&this->weight);
         }
     }
 
@@ -305,7 +320,6 @@ namespace fastllm {
         // printf("\n");
         Embedding(inputIds, this->weight["transformer.wte.weight"], hiddenStates);
         if (visual) {
-            int image_start_id = std::atoi(weight.dicts["image_start_id"].c_str());
             float *inputIdsData = (float *) inputIds.cpuData;
             float *hiddenStatesData = (float *) hiddenStates.cpuData;
             for (int b = 0; b < batch; b++) {
@@ -313,17 +327,22 @@ namespace fastllm {
                 std::vector<int> imageLocs;
                 for (int i = 0; i < inputIds.Count(0) / batch; i++) {
                     if ((int) inputIdsData[i] == image_start_id) {
-                        imagePath.push_back("");
-                        imageLocs.push_back(i);
+                        std::string path;
+                        imageLocs.push_back(i + 1);
                         for (int j = i + 1; j <= i + 256; j++) {
                             if (inputIdsData[j]) {
-                                imagePath.back() += (int) inputIdsData[j];
+                                path += (int) inputIdsData[j];
                             }
                         }
+                        imagePath.push_back(path);
                         i += 256;
                     }    
                 }
                 inputIdsData += inputIds.Count(1);
+
+                if (imagePath.empty()) {
+                    continue;
+                }
 
                 Data images;
                 visual->Decode(imagePath, &images);
@@ -332,7 +351,7 @@ namespace fastllm {
                 for (int i = 0; i < imageLocs.size(); i++) {
                     int loc = imageLocs[i];
                     memcpy(hiddenStatesData + b * hiddenStates.Count(1) + loc * embed_dim, 
-                           (float *) images.cpuData + b * images.Count(1), images.Count(1) * sizeof(float));
+                           (float *) images.cpuData + i * images.Count(1), images.Count(1) * sizeof(float));
                 }
             }
         }

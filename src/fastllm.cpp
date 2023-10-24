@@ -1199,7 +1199,7 @@ namespace fastllm {
             return Data (DataType::FLOAT32, {1, (int)v.size()}, v);
         } else if (this->type == TokenizerType::QWEN) {
             std::map<std::string, int> specialTokens = {{"<|im_start|>", 151644}, {"<|im_end|>", 151645}, {"<|endoftext|>", 151643},
-                                                        {"<img>", 151857}, {"</img>", 0}};
+                                                        {"<img>", 151857}, {"</img>", 151858}};
             
             // comment these special tokens for now
             // for (int i = 0; i < 205; i++) {
@@ -1281,6 +1281,7 @@ namespace fastllm {
                             for (int j = image_end; j < image_st + 256; j++) {
                                 v.push_back(0);
                             }
+                            v.push_back((float) specialTokens["</img>"]);
                         }
                         continue;
                     } else if (!special.empty()) {
@@ -2230,7 +2231,9 @@ namespace fastllm {
     }
 
     void Repeat(Data &input, int axis, int repeats, Data &output) {
-
+        curExecutor->Run("Repeat", {
+            {"input", &input}, {"output", &output}
+        }, {}, {{"axis", axis}, {"repeats", repeats}});
     }
 
     void ApplyLognAttn(Data &input, const Data &lognAttn, const Data &positionIds) {

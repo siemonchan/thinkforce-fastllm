@@ -55,6 +55,7 @@ namespace fastllm {
         this->ops["LlamaRotatePosition2D"] = (BaseOperator*)(new CpuLlamaRotatePosition2DOp());
         this->ops["RepeatPenalty"] = (BaseOperator*)(new CpuRepeatPenaltyOp());
         this->ops["RepeatKV"] = (BaseOperator*)(new CpuRepeatKVOp());
+        this->ops["Repeat"] = (BaseOperator*)(new CpuRepeatOp());
         this->ops["ApplyLognAttn"] = (BaseOperator*)(new CpuApplyLognAttnOp());
         this->ops["Linspace"] = (BaseOperator*)(new CpuLinspaceOp());
         this->ops["Pow"] = (BaseOperator*)(new CpuPowOp());
@@ -1929,13 +1930,15 @@ namespace fastllm {
             delete[] col;
 
             // 3. add bias
-            outputData = (float *) output.cpuData;
-            for (int b = 0; b < batch; b++) {
-                for (int c = 0; c < outputChannel; c++) {
-                    for (int i = 0; i < outputHeight * outputWidth; i++) {
-                        outputData[i] += biasData[c];
+            if (biasData) {
+                outputData = (float *) output.cpuData;
+                for (int b = 0; b < batch; b++) {
+                    for (int c = 0; c < outputChannel; c++) {
+                        for (int i = 0; i < outputHeight * outputWidth; i++) {
+                            outputData[i] += biasData[c];
+                        }
+                        outputData += outputHeight * outputWidth;
                     }
-                    outputData += outputHeight * outputWidth;
                 }
             }
         } else if (input.dataType == DataType::FLOAT16 && output.dataType == DataType::FLOAT16) {
@@ -1999,7 +2002,7 @@ namespace fastllm {
         if (mode == 0) {
             // bilinear
             for (int i = 0; i < channel; i++) {
-                for (int h = 0; h < outputHeight; i++) {
+                for (int h = 0; h < outputHeight; h++) {
                     float input_h = (float) h / scale;
                     int h0 = int(input_h);
                     int h1 = std::min(h0 + 1, inputHeight - 1);
@@ -3602,6 +3605,43 @@ namespace fastllm {
             ErrorInFastLLM("Unsupport RepeatKV data type.\n");
         }
         delete[] origin;
+    }
+
+    void CpuRepeatOp::Reshape(const std::string &opType, const DataDict &datas, 
+                              const FloatDict &floatParams, const IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+        int axis = intParams.find("axis")->second;
+        int repeats = intParams.find("repeats")->second;
+
+        auto dims = input.dims;
+        dims[axis] *= repeats;
+        output.Resize(dims);
+        output.dataType = input.dataType;
+    }
+
+    void CpuRepeatOp::Run(const std::string &opType, const DataDict &datas, 
+                          const FloatDict &floatParams, const IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+        int axis = intParams.find("axis")->second;
+        int repeats = intParams.find("repeats")->second;
+
+        float *inputData = (float *) input.cpuData;
+        float *outputData = (float *) output.cpuData;
+
+        int outer = input.Count(0) / input.Count(axis);
+        int dim = input.dims[axis];
+        int inner = input.Count(axis + 1);
+        for (int i = 0; i < outer; i++) {
+            for (int d = 0; d < dim; d++) {
+                for (int j = 0; j < repeats; j++) {
+                    memcpy(outputData, inputData, inner * sizeof(float));
+                    outputData += inner;
+                }
+                inputData += inner;
+            }
+        }
     }
 
     void CpuApplyLognAttnOp::Run(const std::string &opType, const fastllm::DataDict &datas,

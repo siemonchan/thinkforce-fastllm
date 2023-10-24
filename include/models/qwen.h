@@ -10,7 +10,7 @@
 namespace fastllm {
     class VisualModel {
     public:
-        VisualModel();
+        VisualModel(WeightMap *weight);
 
         void Decode(
                 const std::vector<std::string> &imagePaths, 
@@ -31,7 +31,7 @@ namespace fastllm {
 
         Data mean, std;
         Data positionalEmbedding;
-        Data samplerPosEmbed;
+        Data samplerPosEmbed, samplerPosEmbedAbsPos;
 
         Data samplerWQ, samplerWK, samplerWV;
         Data samplerBQ, samplerBK, samplerBV;
@@ -42,6 +42,8 @@ namespace fastllm {
     class QWenModel : public basellm {
     public:
         QWenModel();
+
+        void LoadFromFile(const std::string &fileName);
 
         // 推理
 		virtual int Forward(
@@ -101,6 +103,7 @@ namespace fastllm {
     private:
         std::string im_start = "<|im_start|>";
         std::string im_end = "<|im_end|>";
+        int image_start_id = 151857;
     };
 }
 
