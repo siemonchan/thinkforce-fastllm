@@ -29,6 +29,17 @@
 namespace fastllm {
     extern double GetSpan(std::chrono::system_clock::time_point time1, std::chrono::system_clock::time_point time2);
 
+    void SaveFile(const Data &data, const std::string &fileName) {
+        float *ptr = (float *) data.cpuData;
+        int len = data.Count(0);
+
+        FILE *outfile = std::fopen(fileName.c_str(), "w");
+        for (int i = 0; i < len; i++) {
+            fprintf(outfile, "%f\n", ptr[i]);
+        }
+        std::fclose(outfile);
+    }
+
     VisualModel::VisualModel(WeightMap *weight) {
         width = 1664;
         imageSize = 448;
@@ -58,10 +69,7 @@ namespace fastllm {
         int tgt_size = (int) (imageSize / patchSize);
 
         // initialize positionalEmbedding
-        temp.Resize({nQueries, width});
-        temp.Allocate();
-        Randn(temp);
-        Scaling(temp, sqrtf(width));
+        temp.CopyFrom((*weight)["transformer.visual.positional_embedding"]);
         if (src_size != tgt_size) {
             temp.Reshape({1, src_size, src_size, -1});
             PermuteSelf(temp, {0, 3, 1, 2});
@@ -98,7 +106,7 @@ namespace fastllm {
                 samplerPosEmbedData[i * outputDim + outputDim / 4 * 3 + j] = ::cos(grid_w[i] * omega[j]);
             }
         }
-        samplerPosEmbed = Data(DataType::FLOAT32, {grid_size * grid_size, outputDim}, samplerPosEmbedData);
+        samplerPosEmbed.CopyFrom(Data(DataType::FLOAT32, {grid_size * grid_size, outputDim}, samplerPosEmbedData));
         if (src_size != tgt_size) {
             temp.CopyFrom(samplerPosEmbed);
             temp.Reshape({1, src_size, src_size, -1});
@@ -242,7 +250,15 @@ namespace fastllm {
         // ln_post & proj
         LayerNorm(attnFinalOutput, (*weight)["transformer.visual.ln_post.weight"], 
                                    (*weight)["transformer.visual.ln_post.bias"], -1, hiddenStates);
-        Linear(hiddenStates, (*weight)["transformer.visual.proj"], Data(), *images);
+        MatMul(hiddenStates, (*weight)["transformer.visual.proj"], *images);
+
+        // 缓存图片feature
+        for (int i = 0; i < imagePaths.size(); i++) {
+            imageMap[imagePaths[i]] = new Data(DataType::FLOAT32);
+            Split(*images, 0, i, i + 1, *imageMap[imagePaths[i]]);
+        }
+
+        return;
     } 
 
     QWenModel::QWenModel() {
@@ -328,13 +344,19 @@ namespace fastllm {
                 for (int i = 0; i < inputIds.Count(0) / batch; i++) {
                     if ((int) inputIdsData[i] == image_start_id) {
                         std::string path;
-                        imageLocs.push_back(i + 1);
                         for (int j = i + 1; j <= i + 256; j++) {
                             if (inputIdsData[j]) {
                                 path += (int) inputIdsData[j];
                             }
                         }
-                        imagePath.push_back(path);
+                        if (visual->imageMap.find(path) != visual->imageMap.end()) {
+                            auto image = visual->imageMap[path];
+                            memcpy(hiddenStatesData + b * hiddenStates.Count(1) + (i + 1) * embed_dim,
+                                   (float *) image->cpuData, image->Count(0) * sizeof(float));
+                        } else {
+                            imageLocs.push_back(i + 1);
+                            imagePath.push_back(path);
+                        }
                         i += 256;
                     }    
                 }

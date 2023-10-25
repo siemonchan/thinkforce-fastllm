@@ -36,6 +36,8 @@ namespace fastllm {
         Data samplerWQ, samplerWK, samplerWV;
         Data samplerBQ, samplerBK, samplerBV;
 
+        std::map<std::string, Data *> imageMap;
+
         WeightMap *weight;
     };
 

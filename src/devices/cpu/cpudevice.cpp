@@ -490,7 +490,7 @@ namespace fastllm {
                     s2 += inputData[j] * inputData[j];
                 }
                 mean /= channels;
-                var = sqrt(s2 / channels - mean*mean + 1e-10);
+                var = sqrt(s2 / channels - mean*mean + 1e-6);
                 j = 0;
 #ifdef __aarch64__
                 float32x4_t means = vdupq_n_f32(mean);
@@ -1772,11 +1772,13 @@ namespace fastllm {
             // 此处 batch * inputChannel 合并为一个channel维度做im2col
             int channels = batch * inputChannel;
             int per = channels / threadNum;
-            for (int i = 0; i < threadNum - 1; i++) {
-                float *curImage = inputData + i * per * inputHeight * inputWidth;
-                float *curCol = col + i * per * kernel * kernel * outputHeight * outputWidth;
-                futures.push_back(pool->Submit(Im2colPart<float>, curImage, curCol, per, 
-                    inputHeight, inputWidth, outputHeight, outputWidth, kernel, stride, padding, dilation, false));
+            if (per > 0) {
+                for (int i = 0; i < threadNum - 1; i++) {
+                    float *curImage = inputData + i * per * inputHeight * inputWidth;
+                    float *curCol = col + i * per * kernel * kernel * outputHeight * outputWidth;
+                    futures.push_back(pool->Submit(Im2colPart<float>, curImage, curCol, per, 
+                        inputHeight, inputWidth, outputHeight, outputWidth, kernel, stride, padding, dilation, false));
+                }
             }
             int last = channels - (threadNum - 1) * per;
             float *curImage = inputData + (threadNum - 1) * per * inputHeight * inputWidth;
@@ -3627,6 +3629,8 @@ namespace fastllm {
         int axis = intParams.find("axis")->second;
         int repeats = intParams.find("repeats")->second;
 
+        output.Allocate();
+
         float *inputData = (float *) input.cpuData;
         float *outputData = (float *) output.cpuData;
 
@@ -3788,7 +3792,7 @@ namespace fastllm {
 
         int batch = image.dims[0];
         int channel = image.dims[1];
-        int spatial = image.dims[2];
+        int spatial = image.dims[2] * image.dims[3];
         AssertInFastLLM(channel == mean.Count(0), "Image channel and mean size are different.\n");
         AssertInFastLLM(channel == std.Count(0), "Image channel and std size are different.\n");
 
@@ -3797,7 +3801,7 @@ namespace fastllm {
         float *stdData = (float *) std.cpuData;
         if (toTensor) {
             for (int i = 0; i < image.Count(0); i++) {
-                imageData[i] /= 255;
+                imageData[i] /= 255.f;
             }
         }
 
