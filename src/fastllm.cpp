@@ -1198,16 +1198,13 @@ namespace fastllm {
             }
             return Data (DataType::FLOAT32, {1, (int)v.size()}, v);
         } else if (this->type == TokenizerType::QWEN) {
-            std::map<std::string, int> specialTokens = {{"<|im_start|>", 151644}, {"<|im_end|>", 151645}, {"<|endoftext|>", 151643},
-                                                        {"<img>", 151857}, {"</img>", 151858}};
-            
             // comment these special tokens for now
             // for (int i = 0; i < 205; i++) {
             //     specialTokens.insert("<|extra_" + std::to_string(i) + "|>");
             // }
 
             std::vector<std::pair<int, int>> sep;
-            for (auto &token : specialTokens) {
+            for (auto &token : specialStringToTokenDict) {
                 int pos = 0;
                 while ((pos = ori.find(token.first, pos)) != std::string::npos) {
                     sep.push_back({pos, token.first.size()});
@@ -1258,8 +1255,8 @@ namespace fastllm {
                     }
 
                     std::string special = ori.substr(sep.back().first, sep.back().second);
-                    if (specialTokens.find(special) != specialTokens.end()) {
-                        v.push_back(specialTokens[special]);    
+                    if (specialStringToTokenDict.find(special) != specialStringToTokenDict.end()) {
+                        v.push_back(specialStringToTokenDict[special]);    
                         i += sep.back().second - 1;
                         sep.pop_back();
                         if (special == "<img>") {
@@ -1281,7 +1278,7 @@ namespace fastllm {
                             for (int j = image_end; j < image_st + 256; j++) {
                                 v.push_back(0);
                             }
-                            v.push_back((float) specialTokens["</img>"]);
+                            v.push_back((float) specialStringToTokenDict["</img>"]);
                         }
                         continue;
                     } else if (!special.empty()) {
@@ -1462,6 +1459,9 @@ namespace fastllm {
         } else {
             for (int i = 0; i < tokens.size(); i++) {
                 std::string s = tokenToStringDict[tokens[i]];
+                if (s.empty()) {
+                    s = specialTokenToStringDict[tokens[i]];
+                }
                 if (s.size() == 6 && s.substr(0, 3) == "<0x" && s.back() == '>') {
                     int c = 0;
                     for (int i = 3; i < 5; i++) {

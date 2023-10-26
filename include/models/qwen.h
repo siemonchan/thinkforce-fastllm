@@ -16,6 +16,10 @@ namespace fastllm {
                 const std::vector<std::string> &imagePaths, 
                 Data *images);
         
+        std::string FromListFormat(const visualDictData &data);
+
+        visualDictData ToListFormat(const std::string &text);
+        
         int width;
         int imageSize;
         int nQueries;
@@ -39,6 +43,15 @@ namespace fastllm {
         std::map<std::string, Data *> imageMap;
 
         WeightMap *weight;
+
+        std::string image_start_tag = "<img>";
+        std::string image_end_tag = "</img>";
+        std::string ref_start_tag = "<ref>";
+        std::string ref_end_tag = "</ref>";
+        std::string box_start_tag = "<box>";
+        std::string box_end_tag = "</box>";
+        std::string quad_start_tag = "<quad>";
+        std::string quad_end_tag = "</quad>";
     };
 
     class QWenModel : public basellm {
@@ -81,6 +94,10 @@ namespace fastllm {
         virtual std::string MakeInput(const std::string &history, int round, const std::string &input);
 
         virtual std::string MakeHistory(const std::string &history, int round, const std::string &input, const std::string &output);
+
+        virtual std::string MakeInputVL(const std::string &history, int round, const visualDictData &input);
+
+        virtual std::string MakeHistoryVL(const std::string &history, int round, const visualDictData &input, const std::string &output);
 
         virtual void FillLLMInputs(std::vector <std::vector <float> > &inputTokens,
                                    const std::map <std::string, int> &params,

@@ -295,7 +295,7 @@ namespace fastllm {
             }
         } */
 
-        cv::resize(image, image, cv::Size(size, size), 0, 0, cv::INTER_CUBIC);
+        cv::resize(image, image, cv::Size(size, size), cv::INTER_CUBIC);
         image.convertTo(image, CV_32FC3);
 
         std::vector<cv::Mat> channels;
@@ -303,6 +303,16 @@ namespace fastllm {
             channels.push_back(cv::Mat(size, size, CV_32FC1, dst + i * size * size));
         }
         cv::split(image, channels);
+    }
+
+    static void drawBBox(std::string path, std::string name, std::pair<int, int> x, std::pair<int, int> y) {
+        auto image = cv::imread(path, -1);
+        int x1 = ((float) x.first / 1000) * image.cols;
+        int x2 = ((float) x.second / 1000) * image.cols;
+        int y1 = ((float) y.first / 1000) * image.rows;
+        int y2 = ((float) y.second / 1000) * image.rows;
+        cv::rectangle(image, cv::Rect(x1, y1, (x2 - x1), (y2 - y1)), cv::Scalar(255, 0, 0), 2);
+        cv::imwrite("result.jpg", image);
     }
 #endif
 }

@@ -379,6 +379,9 @@ namespace fastllm {
         std::unordered_map <int, std::string> tokenToStringDict;
         std::unordered_map <int, float> tokenToScoreDict;
         std::unordered_map <std::string, int> stringToTokenDict;
+
+        std::unordered_map <std::string, int> specialStringToTokenDict;
+        std::unordered_map <int, std::string> specialTokenToStringDict;
 #ifdef USE_SENTENCEPIECE
         std::unique_ptr<sentencepiece::SentencePieceProcessor> spProcessor;
 #endif

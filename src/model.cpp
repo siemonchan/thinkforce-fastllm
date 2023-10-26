@@ -96,6 +96,17 @@ namespace fastllm {
         return model;
     }
 
+    std::string basellm::MakeInputVL(const std::string &history, int round, const visualDictData &input) {
+        ErrorInFastLLM("Not a VL model.\n");
+        return "";
+    }
+
+    std::string basellm::MakeHistoryVL(const std::string &history, int round, 
+                                       const visualDictData &input, const std::string &output) {
+        ErrorInFastLLM("Not a VL model.\n");
+        return "";
+    }
+
     std::unique_ptr<fastllm::basellm> CreateLLMModelFromFile(const std::string &fileName) {
         std::string modelType = GetModelTypeFromFile(fileName);
         basellm *model = CreateModelWithType(modelType);

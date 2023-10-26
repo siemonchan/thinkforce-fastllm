@@ -40,6 +40,118 @@ namespace fastllm {
         std::fclose(outfile);
     }
 
+    inline bool StringCompLoc(const std::string &str, const std::string &comp, size_t loc) {
+        if (loc >= str.size()) {
+            return false;
+        }
+        if (comp.size() + loc >= str.size()) {
+            return false;
+        }
+        for (size_t i = 0; i < comp.size(); i++) {
+            if (str[loc + i] != comp[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    std::string VisualModel::FromListFormat(const visualDictData &data) {
+        std::string text;
+        int num_images = 0;
+        for (auto input : data) {
+            if (input.find("image") != input.end()) {
+                num_images += 1;
+                text += "Pictures ";
+                text += std::to_string(num_images);
+                text += image_start_tag;
+                text += input["image"];
+                text += image_end_tag;
+                text += "\n";
+            } else if (input.find("text") != input.end()) {
+                text += input["text"];
+            } else if (input.find("box") != input.end()) {
+                if (input.find("ref") != input.end()) {
+                    text += ref_start_tag;
+                    text += input["ref"];
+                    text += ref_end_tag;
+                }
+                text += box_start_tag;
+                text += input["box"];
+                text += box_end_tag;
+            }
+        }
+        return text;
+    }
+
+    visualDictData VisualModel::ToListFormat(const std::string &text) {
+        visualDictData data;
+        int i = 0;
+        while (i < text.size()) {
+            std::string key;
+            std::string value;
+            if (StringCompLoc(text, "<ref>", i)) {
+                key = "ref";
+                i += 5;
+                while (!StringCompLoc(text, "</ref>", i)) {
+                    value += text[i];
+                    i++;
+                }
+                i += 6;
+                // after ref, there is box
+                AssertInFastLLM(StringCompLoc(text, "<box>", i), "There must be <box> after <ref>.\n");
+                std::string secondkey;
+                std::string secondvalue;
+                secondkey = "box";
+                i += 5;
+                while (!StringCompLoc(text, "</box>", i)) {
+                    secondvalue += text[i];
+                    i++;
+                }
+                i += 6;
+                data.push_back({{key, value}, {secondkey, secondvalue}});
+            } else if (StringCompLoc(text, "<box>", i)) {
+                key = "box";
+                i += 5;
+                while (!StringCompLoc(text, "</box>", i)) {
+                    value += text[i];
+                    i++;
+                }
+                i += 6;
+                data.push_back({{key, value}});
+            } else if (StringCompLoc(text, "<quad>", i)) {
+                key = "quad";
+                i += 6;
+                while (!StringCompLoc(text, "</quad>", i)) {
+                    value += text[i];
+                    i++;
+                }
+                i += 7;
+                data.push_back({{key, value}});
+            } else if (StringCompLoc(text, "<img>", i)) {
+                key = "image";
+                i += 5;
+                while (!StringCompLoc(text, "</img>", i)) {
+                    value += text[i];
+                    i++;
+                }
+                i += 6;
+                data.push_back({{key, value}});
+            } else {
+                key = "text";
+                while (i < text.size() &&
+                       !StringCompLoc(text, "<ref>", i) &&
+                       !StringCompLoc(text, "<box>", i) &&
+                       !StringCompLoc(text, "<quad>", i) &&
+                       !StringCompLoc(text, "<img>", i)) {
+                    value += text[i];
+                    i++;
+                }
+                data.push_back({{key, value}});
+            }
+        }
+        return data;
+    }
+
     VisualModel::VisualModel(WeightMap *weight) {
         width = 1664;
         imageSize = 448;
@@ -57,6 +169,19 @@ namespace fastllm {
         this->weight = weight;
         // parse weight dict
         std::string visual_dict = weight->dicts["visual"];
+
+        this->weight->tokenizer.specialTokenToStringDict[151851] = "<ref>";
+        this->weight->tokenizer.specialTokenToStringDict[151852] = "</ref>";
+        this->weight->tokenizer.specialTokenToStringDict[151853] = "<box>";
+        this->weight->tokenizer.specialTokenToStringDict[151854] = "</box>";
+        this->weight->tokenizer.specialTokenToStringDict[151855] = "<quad>";
+        this->weight->tokenizer.specialTokenToStringDict[151856] = "</quad>";
+        this->weight->tokenizer.specialTokenToStringDict[151857] = "<img>";
+        this->weight->tokenizer.specialTokenToStringDict[151858] = "</img>";
+        this->weight->tokenizer.specialTokenToStringDict[151859] = "<imgpad>";
+        for (auto specialPair : this->weight->tokenizer.specialTokenToStringDict) {
+            this->weight->tokenizer.specialStringToTokenDict[specialPair.second] = specialPair.first;
+        }
         
         // initialize mean and std
         std::vector<float> meanData = {0.48145466, 0.4578275, 0.40821073};
@@ -150,8 +275,8 @@ namespace fastllm {
 
         int emb_dim = width / heads;
         for (int i = 0; i < layers; i++) {
-            printf("[%d/%d]\r", i + 1, layers);
-            fflush(stdout);
+            // printf("[%d/%d]\r", i + 1, layers);
+            // fflush(stdout);
 
             std::string pre = "transformer.visual.transformer.resblocks." + std::to_string(i) + ".";
             LayerNorm(hiddenStates, (*weight)[pre + "ln_1.weight"], (*weight)[pre + "ln_1.bias"], -1, attnInput);
@@ -266,6 +391,13 @@ namespace fastllm {
         this->pre_prompt = "You are a helpful assistant.";
         this->user_role = "user";
         this->bot_role = "assistant";
+
+        this->weight.tokenizer.specialTokenToStringDict[151643] = "<|endoftext|>";
+        this->weight.tokenizer.specialTokenToStringDict[151644] = "<|im_start|>";
+        this->weight.tokenizer.specialTokenToStringDict[151645] = "<|im_end|>";
+        for (auto specialPair : this->weight.tokenizer.specialTokenToStringDict) {
+            this->weight.tokenizer.specialStringToTokenDict[specialPair.second] = specialPair.first;
+        }
 
         embed_dim = 4096;
 		num_attention_heads = 32;
@@ -711,6 +843,15 @@ namespace fastllm {
             ErrorInFastLLM("Unknown char_format for QWen: " + weight.dicts["chat_format"]);
             return "";
         }
+    }
+
+    std::string QWenModel::MakeInputVL(const std::string &history, int round, const visualDictData &input) {
+        return MakeInput(history, round, visual->FromListFormat(input));
+    }
+
+    std::string QWenModel::MakeHistoryVL(const std::string &history, int round, 
+                                            const visualDictData &input, const std::string &output) {
+        return MakeHistory(history, round, visual->FromListFormat(input), output);
     }
 
     void QWenModel::FillLLMInputs(std::vector <std::vector <float> > &inputTokens,

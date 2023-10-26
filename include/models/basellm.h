@@ -42,6 +42,8 @@ namespace fastllm {
         void RemoveHandle(int handleId);
     };
 
+    typedef std::vector<std::map<std::string, std::string>> visualDictData;
+
     class basellm {
     public:
         basellm() {};
@@ -118,6 +120,10 @@ namespace fastllm {
         virtual std::string MakeInput(const std::string &history, int round, const std::string &input) = 0; // 根据历史信息和当前输入生成prompt
 
         virtual std::string MakeHistory(const std::string &history, int round, const std::string &input, const std::string &output) = 0; // 根据当前回复更新history
+
+        virtual std::string MakeInputVL(const std::string &history, int round, const visualDictData &input);
+
+        virtual std::string MakeHistoryVL(const std::string &history, int round, const visualDictData &input, const std::string &output);
 
         virtual void SetAdapter(const std::string &name);
 
