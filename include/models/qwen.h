@@ -12,9 +12,9 @@ namespace fastllm {
     public:
         VisualModel(WeightMap *weight);
 
-        void Decode(
-                const std::vector<std::string> &imagePaths, 
-                Data *images);
+        void Forward(const Data &allImage, Data *images);
+
+        void Decode(const std::vector<std::string> &imagePaths, Data *images);
         
         std::string FromListFormat(const visualDictData &data);
 

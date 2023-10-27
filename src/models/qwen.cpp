@@ -248,23 +248,12 @@ namespace fastllm {
         return;
     }
 
-    void VisualModel::Decode(const std::vector<std::string> &imagePaths, Data *images) {
-        Data allImage = Data(DataType::FLOAT32);
-        int n = (int) imagePaths.size();
-        allImage.Expansion({n, 3, imageSize, imageSize});
-
-        for (auto path : imagePaths) {
-            Data image;
-            LoadImageData(path, "RGB", imageSize, image);
-            ImageNormalize(image, mean, std, true);
-            CatDirect(allImage, image, 0);
-        }
-
+    void VisualModel::Forward(const Data &images, Data *decodes) {
         Data hiddenStates;
         Data q, k, v;
         Data attnInput, attnOutput, attnWeights, attnFinalOutput;
 
-        Conv2d(allImage, (*weight)["transformer.visual.conv1.weight"], Data(), hiddenStates, patchSize);
+        Conv2d(const_cast<Data &>(images), (*weight)["transformer.visual.conv1.weight"], Data(), hiddenStates, patchSize);
         hiddenStates.Reshape({hiddenStates.dims[0], hiddenStates.dims[1], -1});
         PermuteSelf(hiddenStates, {0, 2, 1});
         
@@ -380,17 +369,34 @@ namespace fastllm {
             (*weight)["transformer.visual.proj"].Unsqueeze(0);
         }
         if (hiddenStates.dims[0] == 1) {
-            MatMul(hiddenStates, (*weight)["transformer.visual.proj"], *images);
+            MatMul(hiddenStates, (*weight)["transformer.visual.proj"], *decodes);
         } else {
             Data proj;
             Repeat((*weight)["transformer.visual.proj"], 0, hiddenStates.dims[0], proj);
-            MatMul(hiddenStates, proj, *images);
+            MatMul(hiddenStates, proj, *decodes);
         }
+
+        return;
+    }
+
+    void VisualModel::Decode(const std::vector<std::string> &imagePaths, Data *decodes) {
+        Data allImage = Data(DataType::FLOAT32);
+        int n = (int) imagePaths.size();
+        allImage.Expansion({n, 3, imageSize, imageSize});
+
+        for (auto path : imagePaths) {
+            Data image;
+            LoadImageData(path, "RGB", imageSize, image);
+            ImageNormalize(image, mean, std, true);
+            CatDirect(allImage, image, 0);
+        }
+
+        Forward(allImage, decodes);
 
         // 缓存图片feature
         for (int i = 0; i < imagePaths.size(); i++) {
             imageMap[imagePaths[i]] = new Data(DataType::FLOAT32);
-            Split(*images, 0, i, i + 1, *imageMap[imagePaths[i]]);
+            Split(*decodes, 0, i, i + 1, *imageMap[imagePaths[i]]);
         }
 
         return;
@@ -993,6 +999,11 @@ namespace fastllm {
         for (int i = 0; i < block_cnt; i++) {
             pastKeyValues.push_back(std::make_pair(Data(DataType::FLOAT32),
                                                    Data(DataType::FLOAT32)));
+        }
+        if (visual) {
+            Data dummyImage = Data(DataType::FLOAT32, {1, 3, visual->imageSize, visual->imageSize});
+            dummyImage.Allocate(0);
+            visual->Forward(dummyImage, &dummyImage);
         }
         Forward(inputIds, attentionMask, positionIds, pastKeyValues);
 #ifdef USE_TFACC40T

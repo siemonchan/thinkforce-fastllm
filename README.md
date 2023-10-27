@@ -101,6 +101,31 @@ Usage:
 <-f|--file> <args>:           输入文件，文件中每行一个prompt，如果行数不足batch则用之前的prompt补充
 ```
 
+## VISION LANGUAGE MODEL
+
+大规模视觉语言模型是一种可以以图像、文字、检测框作为输入，并以文本和检测框作为输出的大语言模型，本项目也支持这样的多模态模型。以下是具体的介绍。
+
+### [QWen-VL](https://huggingface.co/Qwen/Qwen-VL-Chat)
+
+![](./example/visual/demo.jpeg)
+```sh
+./vl -p qwen-vl-chat-int8.flm -t 16 -i demo.jpeg # 类似于运行普通的大语言模型，但是增加了一个-i参数用于传入图像
+欢迎使用 qwen 模型. 输入内容对话，reset清空历史记录，stop退出程序.
+加载图片：demo.jpeg
+用户: 这张图里有什么
+qwen:这张图片中有一个黄色的拉布拉多犬和一个坐在沙滩上的女孩。他们坐在沙滩上，面前是蓝色的海洋。在女孩的脚边还放着一个黑色的袋子。在阳光的照射下，画面显得非常温馨。
+用户: 输出“拉布拉多犬”的检测框
+qwen:<ref>拉布拉多犬</ref><box>(233,430),(585,900)</box>
+```
+
+注意：运行VL模型需要用到opencv，你可以通过以下方式安装
+
+```sh
+sudo apt update
+sudo apt install libopencv-dev
+```
+
+
 ---
 # Original fastllm README:
 

@@ -11,6 +11,8 @@ option(USE_MMAP "use mmap" OFF)
 
 option(USE_SENTENCEPIECE "use sentencepiece" OFF)
 
+option(USE_OPENCV "use opencv" ON)
+
 message(STATUS "USE_CUDA: ${USE_CUDA}")
 
 message(STATUS "USE_TFACC: ${USE_TFACC}")
@@ -18,6 +20,8 @@ message(STATUS "USE_TFACC: ${USE_TFACC}")
 message(STATUS "PYTHON_API: ${PY_API}")
 
 message(STATUS "USE_SENTENCEPIECE: ${USE_SENTENCEPIECE}")
+
+message(STATUS "USE_OPENCV: ${USE_OPENCV}")
 
 set(CMAKE_BUILD_TYPE "Release")
 
@@ -49,6 +53,14 @@ if (USE_SENTENCEPIECE)
     set(CMAKE_CXX_STANDARD 17)
     add_compile_definitions(USE_SENTENCEPIECE)
     set(FASTLLM_LINKED_LIBS ${FASTLLM_LINKED_LIBS} sentencepiece)
+endif()
+
+if (USE_OPENCV)
+    find_package(OpenCV REQUIRED)
+    include_directories(${OpenCV_INCLUDE_DIRS})
+
+    add_compile_definitions(USE_OPENCV)
+    set(FASTLLM_LINKED_LIBS ${FASTLLM_LINKED_LIBS} ${OpenCV_LIBS})  
 endif()
 
 if (USE_CUDA)
@@ -127,6 +139,9 @@ target_link_libraries(benchmark fastllm)
 
 add_executable(apiserver example/apiserver/apiserver.cpp example/apiserver/json11.cpp)
 target_link_libraries(apiserver fastllm)
+
+add_executable(vl example/visual/vl.cpp)
+target_link_libraries(vl fastllm)
 
 add_library(fastllm_tools SHARED ${FASTLLM_CXX_SOURCES} ${FASTLLM_CUDA_SOURCES} ${FASTLLM_TFACC_SOURCES} tools/src/pytools.cpp)
 target_link_libraries(fastllm_tools PUBLIC ${FASTLLM_LINKED_LIBS})
