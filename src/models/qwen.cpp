@@ -275,8 +275,8 @@ namespace fastllm {
 
         int emb_dim = width / heads;
         for (int i = 0; i < layers; i++) {
-            // printf("[%d/%d]\r", i + 1, layers);
-            // fflush(stdout);
+            printf("image decode [%d/%d]\r", i + 1, layers);
+            fflush(stdout);
 
             std::string pre = "transformer.visual.transformer.resblocks." + std::to_string(i) + ".";
             LayerNorm(hiddenStates, (*weight)[pre + "ln_1.weight"], (*weight)[pre + "ln_1.bias"], -1, attnInput);
@@ -375,7 +375,17 @@ namespace fastllm {
         // ln_post & proj
         LayerNorm(attnFinalOutput, (*weight)["transformer.visual.ln_post.weight"], 
                                    (*weight)["transformer.visual.ln_post.bias"], -1, hiddenStates);
-        MatMul(hiddenStates, (*weight)["transformer.visual.proj"], *images);
+        
+        if ((*weight)["transformer.visual.proj"].dims.size() == 2) {
+            (*weight)["transformer.visual.proj"].Unsqueeze(0);
+        }
+        if (hiddenStates.dims[0] == 1) {
+            MatMul(hiddenStates, (*weight)["transformer.visual.proj"], *images);
+        } else {
+            Data proj;
+            Repeat((*weight)["transformer.visual.proj"], 0, hiddenStates.dims[0], proj);
+            MatMul(hiddenStates, proj, *images);
+        }
 
         // 缓存图片feature
         for (int i = 0; i < imagePaths.size(); i++) {
@@ -660,6 +670,48 @@ namespace fastllm {
         Data a1, a2, mlpOutput;
 
         Embedding(inputIds, this->weight["transformer.wte.weight"], hiddenStates);
+        if (visual) {
+            float *inputIdsData = (float *) inputIds.cpuData;
+            float *hiddenStatesData = (float *) hiddenStates.cpuData;
+            for (int b = 0; b < batch; b++) {
+                std::vector<std::string> imagePath;
+                std::vector<int> imageLocs;
+                for (int i = 0; i < seqLens[b]; i++) {
+                    if ((int) inputIdsData[i] == image_start_id) {
+                        std::string path;
+                        for (int j = i + 1; j <= i + 256; j++) {
+                            if (inputIdsData[j]) {
+                                path += (int) inputIdsData[j];
+                            }
+                        }
+                        if (visual->imageMap.find(path) != visual->imageMap.end()) {
+                            auto image = visual->imageMap[path];
+                            memcpy(hiddenStatesData + b * hiddenStates.Count(1) + (i + 1) * embed_dim,
+                                   (float *) image->cpuData, image->Count(0) * sizeof(float));
+                        } else {
+                            imageLocs.push_back(i + 1);
+                            imagePath.push_back(path);
+                        }
+                        i += 256;
+                    }   
+                }
+                inputIdsData += inputIds.Count(1);
+
+                if (imagePath.empty()) {
+                    continue;
+                }
+
+                Data images;
+                visual->Decode(imagePath, &images);
+
+                // 将image encoding嵌入到hidden states中
+                for (int i = 0; i < imageLocs.size(); i++) {
+                    int loc = imageLocs[i];
+                    memcpy(hiddenStatesData + b * hiddenStates.Count(1) + loc * embed_dim, 
+                           (float *) images.cpuData + i * images.Count(1), images.Count(1) * sizeof(float));
+                }
+            }
+        }
         for (int i = 0; i < this->block_cnt; i++) {
             ApplyDeviceMap(this->deviceMap, i + 1, block_cnt);
 
@@ -821,28 +873,30 @@ namespace fastllm {
     }
 
     std::string QWenModel::MakeInput(const std::string &history, int round, const std::string &input) {
+        std::string res;
         if (weight.dicts["chat_format"] == "chatml") {
-            return (round == 0 ? im_start + "system" + "\n" + pre_prompt + im_end : history) + 
+            res = (round == 0 ? im_start + "system" + "\n" + pre_prompt + im_end : history) + 
                 "\n" + im_start + user_role + "\n" + input + im_end + "\n" + im_start + bot_role + "\n";
         } else if (weight.dicts["chat_format"] == "raw") {
-            return history + input;
+            res = history + input;
         } else {
             ErrorInFastLLM("Unknown char_format for QWen: " + weight.dicts["chat_format"]);
-            return "";
         }
+        return res;
     }
 
     std::string QWenModel::MakeHistory(const std::string &history, int round, 
                                        const std::string &input, const std::string &output) {
+        std::string res;
         if (weight.dicts["chat_format"] == "chatml") {
-            return (round == 0 ? im_start + "system" + "\n" + pre_prompt + im_end : history) + 
+            res = (round == 0 ? im_start + "system" + "\n" + pre_prompt + im_end : history) + 
                 "\n" + im_start + user_role + "\n" + input + im_end + "\n" + im_start + bot_role + "\n" + output + im_end;
         } else if (weight.dicts["chat_format"] == "raw") {
-            return history + input + output;
+            res = history + input + output;
         } else {
             ErrorInFastLLM("Unknown char_format for QWen: " + weight.dicts["chat_format"]);
-            return "";
         }
+        return res;
     }
 
     std::string QWenModel::MakeInputVL(const std::string &history, int round, const visualDictData &input) {
@@ -850,7 +904,7 @@ namespace fastllm {
     }
 
     std::string QWenModel::MakeHistoryVL(const std::string &history, int round, 
-                                            const visualDictData &input, const std::string &output) {
+                                         const visualDictData &input, const std::string &output) {
         return MakeHistory(history, round, visual->FromListFormat(input), output);
     }
 

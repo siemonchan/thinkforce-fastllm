@@ -1,5 +1,5 @@
 #include "model.h"
-#include "models/qwen.h"
+#include "utils.h"
 
 struct RunConfig {
 	std::string path = ""; // 模型文件路径
@@ -77,7 +77,7 @@ int main(int argc, char **argv) {
     while (true) {
         fastllm::visualDictData input_vl;
         if (round == 0 && !config.imagePath.empty()) {
-            printf("加载图片：%s\n", config.imagePath);
+            printf("加载图片：%s\n", config.imagePath.c_str());
             input_vl.push_back({{"image", config.imagePath}});
         }
         

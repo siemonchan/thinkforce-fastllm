@@ -305,14 +305,38 @@ namespace fastllm {
         cv::split(image, channels);
     }
 
-    static void drawBBox(std::string path, std::string name, std::pair<int, int> x, std::pair<int, int> y) {
+    static void drawBBox(std::string path, std::string savePath, std::string ref, std::string box) {
+        int rect[4];
+        int cnt = 0;
+        std::string num;
+        for (int i = 0; i < box.size(); i++) {
+            if ((box[i] == '('|| box[i] == ')' || box[i] == ',')) {
+                if (!num.empty()) {
+                    rect[cnt] = atoi(num.c_str());
+                    cnt++;
+                    num.clear();
+                } else {
+                    continue;
+                }
+            } else {
+                num += box[i];
+            }
+        }
+        // printf("%d %d %d %d\n", rect[0], rect[1], rect[2], rect[3]);
+
         auto image = cv::imread(path, -1);
-        int x1 = ((float) x.first / 1000) * image.cols;
-        int x2 = ((float) x.second / 1000) * image.cols;
-        int y1 = ((float) y.first / 1000) * image.rows;
-        int y2 = ((float) y.second / 1000) * image.rows;
+        int x1 = ((float) rect[0] / 1000) * image.cols;
+        int y1 = ((float) rect[1] / 1000) * image.rows;
+        int x2 = ((float) rect[2] / 1000) * image.cols;
+        int y2 = ((float) rect[3] / 1000) * image.rows;
+        
         cv::rectangle(image, cv::Rect(x1, y1, (x2 - x1), (y2 - y1)), cv::Scalar(255, 0, 0), 2);
-        cv::imwrite("result.jpg", image);
+        if (!ref.empty()) {
+            // put text on image
+            // setlocale(LC_CTYPE, "zh_CN.UTF-8");
+            cv::putText(image, ref, cv::Point(x1, y1), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(255, 0, 0), 1);
+        }
+        cv::imwrite(savePath, image);
     }
 #endif
 }

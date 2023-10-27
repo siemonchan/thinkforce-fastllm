@@ -3052,6 +3052,9 @@ namespace fastllm {
         AssertInFastLLM(input0.dataType == DataType::FLOAT32 || input1.dataType == DataType::FLOAT16,
                         "AddTo error: Data's type should be float32 or float16.\n");
 
+        int len0 = input0.Count(0);
+        int len1 = input1.Count(0);
+        AssertInFastLLM(len0 >= len1, "AddTo error: Input0 size must be no less than Input1 size.\n");
         if (input0.dims == input1.dims) {
             int len = input0.Count(0);
             if (input0.dataType == DataType::FLOAT32) {
@@ -3075,11 +3078,9 @@ namespace fastllm {
                     input0Data[i] = float_to_half(fp16tofp32.dict[input0Data[i]] + fp16tofp32.dict[input1Data[i]] * alpha);
                 }
             }
-        } else {
-            int len0 = input0.Count(0);
-            int len1 = input1.Count(0);
+        } else if (len0 / len1 == input0.dims.back() / input1.dims.back()) {
+            // 只有最后一维不同
             int scale = len0 / len1;
-            AssertInFastLLM(scale > 1, "AddTo error: Input0 size must be no less than Input1 size.\n");
             if (input0.dataType == DataType::FLOAT32) {
                 float *input0Data = (float *) input0.cpuData;
                 float *input1Data = (float *) input1.cpuData;
@@ -3093,8 +3094,62 @@ namespace fastllm {
                     input0Data[i] = float_to_half(fp16tofp32.dict[input0Data[i]] + fp16tofp32.dict[input1Data[i / scale]] * alpha);
                 }
             }
+        } else if (len0 / len1 == input0.dims[0] / input1.dims[0]) {
+            // 只有第一维不同
+            int scale = len0 / len1;
+            if (input0.dataType == DataType::FLOAT32) {
+                float *input0Data = (float *) input0.cpuData;
+                float *input1Data = (float *) input1.cpuData;
+                for (int s = 0; s < scale; s++) {
+                    for (int i = 0; i < len1; i++) {
+                        input0Data[i] += input1Data[i] * alpha;
+                    }
+                    input0Data += len1;
+                }
+            } else if (input0.dataType == DataType::FLOAT16) {
+                uint16_t *input0Data = (uint16_t *) input0.cpuData;
+                uint16_t *input1Data = (uint16_t *) input1.cpuData;
+                for (int s = 0; s < scale; s++) {
+                    for (int i = 0; i < len0; i++) {
+                        input0Data[i] = float_to_half(fp16tofp32.dict[input0Data[i]] + fp16tofp32.dict[input1Data[i]] * alpha);
+                    }
+                    input0Data += len1;
+                }
+            }
+        } else {
+            std::vector<int> scales;
+            for (int i = 0; i < input0.dims.size(); i++) {
+                AssertInFastLLM(input0.dims[i] >= input1.dims[i], "Input1`s size should be no larger than Input0.\n");
+                scales.push_back(input0.dims[i] / input1.dims[i]);
+            }
+            std::vector<int> allIdx;
+            for (int i = 0; i < input0.Count(0); i++) {
+                int idx = 0;
+                for (int j = 0; j < scales.size(); j++) {
+                    int cord;
+                    if (j == 0) {
+                        cord = i / input0.strides[j];
+                    } else {
+                        cord = i % input0.strides[j - 1] / input0.strides[j];
+                    }
+                    idx += cord / scales[j] * input1.strides[j];
+                }
+                allIdx.push_back(idx);
+            }
+            if (input0.dataType == DataType::FLOAT32) {
+                float *input0Data = (float *) input0.cpuData;
+                float *input1Data = (float *) input1.cpuData;
+                for (int i = 0; i < len0; i++) {
+                    input0Data[i] += input1Data[allIdx[i]] * alpha;
+                }
+            } else if (input0.dataType == DataType::FLOAT16) {
+                uint16_t *input0Data = (uint16_t *) input0.cpuData;
+                uint16_t *input1Data = (uint16_t *) input1.cpuData;
+                for (int i = 0; i < len0; i++) {
+                    input0Data[i] = float_to_half(fp16tofp32.dict[input0Data[i]] + fp16tofp32.dict[input1Data[allIdx[i]]] * alpha);
+                }
+            }
         }
-        
     }
 
     void CpuAttentionMaskOp::Run(const std::string &opType, const fastllm::DataDict &datas,
