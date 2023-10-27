@@ -103,11 +103,29 @@ Usage:
 
 ## VISION LANGUAGE MODEL
 
-大规模视觉语言模型是一种可以以图像、文字、检测框作为输入，并以文本和检测框作为输出的大语言模型，本项目也支持这样的多模态模型。以下是具体的介绍。
+大规模视觉语言模型是一种可以以图像、文字、检测框作为输入，并以文本和检测框作为输出的大语言模型，本项目也支持了这样的多模态模型。
 
 ### [QWen-VL](https://huggingface.co/Qwen/Qwen-VL-Chat)
 
-![](./example/visual/demo.jpeg)
+QWen-VL是基于千问大模型的大规模视觉语言模型。在编译目录下包含一个名为"vl"的示例程序，你可以通过以下的方式查看它的用法：
+
+```sh
+./vl -h
+Usage:
+[-h|--help]:                  显示帮助
+<-p|--path> <args>:           模型文件的路径
+<-i|--image> <args>:          模型使用图片的路径
+<-t|--threads> <args>:        使用的线程数量
+<-l|--low>:                   使用低内存模式
+<-s|--history><args>          最大历史记录长度
+<--top_p> <args>:             采样参数top_p
+<--top_k> <args>:             采样参数top_k
+<--temperature> <args>:       采样参数温度，越高结果越不固定
+<--repeat_penalty> <args>:    采样参数重复惩罚
+```
+
+以下是一个使用示例：
+
 ```sh
 ./vl -p qwen-vl-chat-int8.flm -t 16 -i demo.jpeg # 类似于运行普通的大语言模型，但是增加了一个-i参数用于传入图像
 欢迎使用 qwen 模型. 输入内容对话，reset清空历史记录，stop退出程序.
@@ -117,6 +135,8 @@ qwen:这张图片中有一个黄色的拉布拉多犬和一个坐在沙滩上的
 用户: 输出“拉布拉多犬”的检测框
 qwen:<ref>拉布拉多犬</ref><box>(233,430),(585,900)</box>
 ```
+
+![](./example/visual/demo.jpeg)
 
 注意：运行VL模型需要用到opencv，你可以通过以下方式安装
 
