@@ -48,7 +48,9 @@ namespace fastllm {
     public:
         basellm() {};
 
-        ~basellm() {};
+        ~basellm() {
+            this->weight.ReleaseWeight();
+        };
 
         virtual void LoadFromFile(const std::string &fileName); // 从文件读取
 
