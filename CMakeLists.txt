@@ -11,7 +11,7 @@ option(USE_MMAP "use mmap" OFF)
 
 option(USE_SENTENCEPIECE "use sentencepiece" OFF)
 
-option(USE_OPENCV "use opencv" ON)
+option(USE_OPENCV "use opencv" OFF)
 
 message(STATUS "USE_CUDA: ${USE_CUDA}")
 
