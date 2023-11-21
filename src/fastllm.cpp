@@ -264,7 +264,7 @@ namespace fastllm {
 
     void Data::CopyFrom(const Data &ori) {
         // std::cout<<"调用拷贝构造"<<std::endl;
-        if (ori.dims != this->dims || this->cpuData == nullptr) {
+        if (ori.dims != this->dims || (this->cpuData == nullptr && this->cudaData == nullptr)) {
             if (ori.dims.size() == 0) {
                 delete[] this->cpuData;
                 this->dataType = ori.dataType;
@@ -273,11 +273,16 @@ namespace fastllm {
                 this->cpuData = nullptr;
                 return;
             }
+            this->dataDevice = ori.dataDevice;
             this->dataType = ori.dataType;
             this->Resize(ori.dims);
             this->Allocate();
         }
-        std::memcpy(this->cpuData, ori.cpuData, this->GetBytes());
+        if (ori.dataDevice == DataDevice::CPU) {
+            std::memcpy(this->cpuData, ori.cpuData, this->GetBytes());
+        } else if (ori.dataDevice == DataDevice::CUDA) {
+            FastllmCudaCopyFromDeviceToDevice(this->cudaData, ori.cudaData, this->GetBytes());   
+        }
     }
 
     uint64_t Data::Count(int i) const {
@@ -528,9 +533,7 @@ namespace fastllm {
             delete[] currentData;
         } 
 #ifdef USE_CUDA
-        if (dataDevice == DataDevice::CUDA) {
-            FastllmCudaConvertDataType(newData, currentData, targetType, currentType, Count(0));
-        }
+        // todo
 #endif
     }
 

@@ -264,8 +264,10 @@ namespace fastllm {
 
         int emb_dim = width / heads;
         for (int i = 0; i < layers; i++) {
+#ifndef USE_CUDA
             printf("image decode [%d/%d]\r", i + 1, layers);
             fflush(stdout);
+#endif
 
             std::string pre = "transformer.visual.transformer.resblocks." + std::to_string(i) + ".";
             LayerNorm(hiddenStates, (*weight)[pre + "ln_1.weight"], (*weight)[pre + "ln_1.bias"], -1, attnInput);
@@ -391,7 +393,10 @@ namespace fastllm {
             CatDirect(allImage, image, 0);
         }
 
+        decodes->lockInCPU = false;
         Forward(allImage, decodes);
+        decodes->ToDevice(DataDevice::CPU);
+        decodes->lockInCPU = true;
 
         // 缓存图片feature
         for (int i = 0; i < imagePaths.size(); i++) {

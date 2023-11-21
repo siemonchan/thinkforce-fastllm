@@ -181,6 +181,9 @@ def tofile(exportPath,
         if (isinstance(m, torch.nn.Linear)):
             weight_type_dict[key + ".weight"] = "linear"
             module_dict[key + ".weight"] = m
+        if (isinstance(m, torch.nn.Conv2d)):
+            weight_type_dict[key + '.weight'] = 'linear'
+            module_dict[key + '.weight'] = m
         if (isinstance(m, torch.nn.Embedding)):
             weight_type_dict[key] = "embedding"
 
@@ -212,6 +215,10 @@ def tofile(exportPath,
         fo.write(struct.pack('i', len(cur.shape)))
         for i in cur.shape:
             fo.write(struct.pack('i', i))
+
+        # flatten weight here for quantization
+        if len(cur.shape) == 4:
+            cur = cur.reshape([cur.shape[0], -1])
         if (to_data_type == 3):
             write_int8(fo, cur)
         elif (to_data_type == 8):
