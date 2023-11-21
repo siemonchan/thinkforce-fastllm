@@ -17,6 +17,7 @@ namespace fastllm {
         this->ops["LayerNorm"] = (BaseOperator*)(new CudaLayerNormOp());
         this->ops["RMSNorm"] = (BaseOperator*)(new CudaRMSNormOp());
         this->ops["Linear"] = (BaseOperator*)(new CudaLinearOp());
+        this->ops["Conv2d"] = (BaseOperator*)(new CudaConv2dOp());
         this->ops["Split"] = (BaseOperator*)(new CudaSplitOp());
         this->ops["CatDirect"] = (BaseOperator*)(new CudaCatDirectOp());
         this->ops["MatMul"] = (BaseOperator*)(new CudaMatMulOp());
@@ -215,6 +216,61 @@ namespace fastllm {
             FastllmCudaMatMulFloatInt4NoZero(input, weight, bias, output, n, m, k);
         } else {
             ErrorInFastLLM("Linear error: unsupport weight's dataType.\n");
+        }
+    }
+
+    void CudaConv2dOp::Reshape(const std::string &opType, const fastllm::DataDict &datas,
+                               const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+        Data &weight = *(datas.find("weight")->second);
+
+        AssertInFastLLM(weight.dims[2] == weight.dims[3], "Fastllm dosen`t support kernel_h != kernel_w");
+
+        int stride = intParams.find("stride")->second;
+        int padding = intParams.find("padding")->second;
+        int dilation = intParams.find("dilation")->second;
+        int kernel = weight.dims[2];
+        int inputChannel = input.dims[1];
+        int inputHeight = input.dims[2];
+        int inputWidth = input.dims[3];
+
+        int batch = input.dims[0];
+        int outputChannel = weight.dims[0];
+        int outputHeight = ((inputHeight + padding * 2) - (dilation * (kernel - 1) + 1)) / stride + 1;
+        int outputWidth = ((inputWidth + padding * 2) - (dilation * (kernel - 1) + 1)) / stride + 1;
+
+        output.dataType = input.dataType;
+        output.Resize({batch, outputChannel, outputHeight, outputWidth});
+    }
+    
+    bool CudaConv2dOp::CanRun(const std::string &opType, const fastllm::DataDict &datas,
+                              const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
+        return true;
+    }
+
+    void CudaConv2dOp::Run(const std::string &opType, const fastllm::DataDict &datas,
+                           const fastllm::FloatDict &floatParams, const fastllm::IntDict &intParams) {
+        Data &input = *(datas.find("input")->second);
+        Data &output = *(datas.find("output")->second);
+        Data &weight = *(datas.find("weight")->second);
+        Data &bias = *(datas.find("bias")->second);
+
+        int kernel = weight.dims[2];
+        int stride = intParams.find("stride")->second;
+        int padding = intParams.find("padding")->second;
+        int dilation = intParams.find("dilation")->second;
+        int group = intParams.find("group")->second;
+
+        output.Allocate();
+        if (weight.dataType == DataType::FLOAT32) {
+            FastllmCudaConv2dFloat32(input, weight, bias, output, kernel, stride, padding, group, dilation);
+        } else if (weight.dataType == DataType::FLOAT16) {
+            FastllmCudaConv2dFloat16(input, weight, bias, output, kernel, stride, padding, group, dilation);
+        } else if (weight.dataType == DataType::INT8) {
+            FastllmCudaConv2dFloatInt8(input, weight, bias, output, kernel, stride, padding, group, dilation);
+        } else {
+            ErrorInFastLLM("Conv2d error: unsupport weight's dataType.\n");
         }
     }
 
