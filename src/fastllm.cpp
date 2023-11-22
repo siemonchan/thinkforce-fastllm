@@ -281,7 +281,11 @@ namespace fastllm {
         if (ori.dataDevice == DataDevice::CPU) {
             std::memcpy(this->cpuData, ori.cpuData, this->GetBytes());
         } else if (ori.dataDevice == DataDevice::CUDA) {
+#ifdef USE_CUDA
             FastllmCudaCopyFromDeviceToDevice(this->cudaData, ori.cudaData, this->GetBytes());   
+#else
+            ErrorInFastLLM("CUDA not available.\n");
+#endif
         }
     }
 
